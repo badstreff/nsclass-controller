@@ -100,8 +100,9 @@ func (r *NamespaceClassReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// When we prune we return requeue true if any resources were marked as needing to be deleted so we check again pretty quick
 	if nsclass.Spec.Prune != nil && *nsclass.Spec.Prune {
 		log.Info("pruning")
-		previousInventory := ResourceInventoryFromStatus(ctx, &nsclass.Status)
-		requeue, inventory, pruneErr := r.Prune(ctx, previousInventory, desired, applied)
+		inventory := ResourceInventoryFromStatus(ctx, &nsclass.Status)
+		maps.Copy(inventory, applied)
+		requeue, inventory, pruneErr := r.Prune(ctx, inventory, desired)
 		statusErr := r.UpdateStatus(ctx, nsclass, inventory)
 		if pruneErr != nil || statusErr != nil {
 			log.Info("prune error")
@@ -195,17 +196,13 @@ func (r *NamespaceClassReconciler) ApplyDesired(ctx context.Context, desired map
 	return applied, errs
 }
 
-func (r *NamespaceClassReconciler) Prune(ctx context.Context, previous ResourceInventory, desired map[ResourceKey]*unstructured.Unstructured, applied ResourceInventory) (bool, ResourceInventory, error) {
-	inventory := maps.Clone(applied)
+// Prune looks at the current inventory or resources and removed and resources that are not in the desired map
+func (r *NamespaceClassReconciler) Prune(ctx context.Context, inventory ResourceInventory, desired map[ResourceKey]*unstructured.Unstructured) (bool, ResourceInventory, error) {
 	var errs error
 	requeue := false
 
-	for key, managed := range previous {
-		if _, ok := desired[key]; ok {
-			// Retain keys are are desired but we failed to apply
-			if _, appliedOK := applied[key]; !appliedOK {
-				inventory[key] = managed
-			}
+	for key, managed := range inventory {
+		if _, exists := desired[key]; exists {
 			continue
 		}
 		// Resource no longer desired
@@ -226,20 +223,30 @@ func (r *NamespaceClassReconciler) Prune(ctx context.Context, previous ResourceI
 		)
 		switch {
 		case apierrors.IsNotFound(err):
-			// Resource is confirmed absent.
-			// Do not include it in remaining.
+			// Resource is confirmed absent, prune it
 			continue
-
 		case apierrors.IsConflict(err):
-			if managed.UID != obj.GetUID() {
-				// Original object is gone, go ahead and remove this resource from the status
-				continue
-			} else {
-				// Some other conflict error...
+			// TODO: maybe switch to uncached reader
+			if getErr := r.Get(ctx, client.ObjectKeyFromObject(obj), obj); getErr != nil {
+				if apierrors.IsNotFound(getErr) {
+					// Original resource is gone, prune it
+					continue
+				}
+				// Get failed so retry...
 				managed.Phase = new(experimentalv1.PhaseFailed)
 				inventory[key] = managed
-				errs = errors.Join(errs, err)
+				errs = errors.Join(errs, getErr)
+				continue
 			}
+			if managed.UID != obj.GetUID() {
+				// The original object has been replaced.
+				// Remove the old inventory entry.
+				continue
+			}
+			// Same UID, but some other conflict occurred, return a normal error and retry
+			managed.Phase = new(experimentalv1.PhaseFailed)
+			inventory[key] = managed
+			errs = errors.Join(errs, err)
 		case err != nil:
 			managed.Phase = new(experimentalv1.PhaseFailed)
 			inventory[key] = managed
