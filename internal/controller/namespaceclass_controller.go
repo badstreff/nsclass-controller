@@ -124,7 +124,7 @@ func (r *NamespaceClassReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	return ctrl.Result{RequeueAfter: time.Minute * 5}, nil
 }
 
-// returns the namespaces associated with a namespace class
+// listNamespaces returns the namespaces associated with a namespace class
 func (r *NamespaceClassReconciler) listNamespaces(ctx context.Context, nsclass *experimentalv1.NamespaceClass) (*corev1.NamespaceList, error) {
 	namespaces := &corev1.NamespaceList{}
 	selector, err := metav1.LabelSelectorAsSelector(
@@ -140,6 +140,7 @@ func (r *NamespaceClassReconciler) listNamespaces(ctx context.Context, nsclass *
 }
 
 func (r *NamespaceClassReconciler) BuildDesired(ctx context.Context, nsclass *experimentalv1.NamespaceClass) (map[ResourceKey]*unstructured.Unstructured, error) {
+	// TODO: Right now we silently overwrite duplicate entries in the desired state, we might want to return an error of someone submits duplicate resources instead
 	namespaces, err := r.listNamespaces(ctx, nsclass)
 	if err != nil {
 		return nil, err
@@ -228,6 +229,17 @@ func (r *NamespaceClassReconciler) Prune(ctx context.Context, previous ResourceI
 			// Resource is confirmed absent.
 			// Do not include it in remaining.
 			continue
+
+		case apierrors.IsConflict(err):
+			if managed.UID != obj.GetUID() {
+				// Original object is gone, go ahead and remove this resource from the status
+				continue
+			} else {
+				// Some other conflict error...
+				managed.Phase = new(experimentalv1.PhaseFailed)
+				inventory[key] = managed
+				errs = errors.Join(errs, err)
+			}
 		case err != nil:
 			managed.Phase = new(experimentalv1.PhaseFailed)
 			inventory[key] = managed
