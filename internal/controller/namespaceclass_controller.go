@@ -102,7 +102,7 @@ func (r *NamespaceClassReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		log.Info("pruning")
 		inventory := ResourceInventoryFromStatus(ctx, &nsclass.Status)
 		maps.Copy(inventory, applied)
-		requeue, inventory, pruneErr := r.Prune(ctx, inventory, desired)
+		requeue, pruneErr := r.Prune(ctx, inventory, desired)
 		statusErr := r.UpdateStatus(ctx, nsclass, inventory)
 		if pruneErr != nil || statusErr != nil {
 			log.Info("prune error")
@@ -196,8 +196,8 @@ func (r *NamespaceClassReconciler) ApplyDesired(ctx context.Context, desired map
 	return applied, errs
 }
 
-// Prune looks at the current inventory or resources and removed and resources that are not in the desired map
-func (r *NamespaceClassReconciler) Prune(ctx context.Context, inventory ResourceInventory, desired map[ResourceKey]*unstructured.Unstructured) (bool, ResourceInventory, error) {
+// Prune looks at the current inventory or resources and removed and resources that are not in the desired map, the inventory param is modified in place
+func (r *NamespaceClassReconciler) Prune(ctx context.Context, inventory ResourceInventory, desired map[ResourceKey]*unstructured.Unstructured) (bool, error) {
 	var errs error
 	requeue := false
 
@@ -224,12 +224,14 @@ func (r *NamespaceClassReconciler) Prune(ctx context.Context, inventory Resource
 		switch {
 		case apierrors.IsNotFound(err):
 			// Resource is confirmed absent, prune it
+			delete(inventory, key)
 			continue
 		case apierrors.IsConflict(err):
 			// TODO: maybe switch to uncached reader
 			if getErr := r.Get(ctx, client.ObjectKeyFromObject(obj), obj); getErr != nil {
 				if apierrors.IsNotFound(getErr) {
 					// Original resource is gone, prune it
+					delete(inventory, key)
 					continue
 				}
 				// Get failed so retry...
@@ -241,6 +243,7 @@ func (r *NamespaceClassReconciler) Prune(ctx context.Context, inventory Resource
 			if managed.UID != obj.GetUID() {
 				// The original object has been replaced.
 				// Remove the old inventory entry.
+				delete(inventory, key)
 				continue
 			}
 			// Same UID, but some other conflict occurred, return a normal error and retry
@@ -258,7 +261,7 @@ func (r *NamespaceClassReconciler) Prune(ctx context.Context, inventory Resource
 		}
 	}
 
-	return requeue, inventory, errs
+	return requeue, errs
 }
 
 // ResourceInventoryFromStatus parses the status of the NamespaceClass and returns a ResourceInventory
