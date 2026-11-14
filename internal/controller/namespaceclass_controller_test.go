@@ -104,9 +104,16 @@ var _ = Describe("NamespaceClass Controller", func() {
 			By("Cleanup the specific resource instance NamespaceClass")
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 
-			ns := &corev1.Namespace{}
-			err = k8sClient.Get(ctx, types.NamespacedName{Name: "test-namespace"}, ns)
-			Expect(err).NotTo(HaveOccurred())
+			cm := &corev1.ConfigMap{}
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: "test-config", Namespace: "test-namespace"}, cm)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, cm)).To(Succeed())
+			}
+			sa := &corev1.ServiceAccount{}
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: "test-sa", Namespace: "test-namespace"}, sa)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, sa)).To(Succeed())
+			}
 		})
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
