@@ -90,7 +90,10 @@ func (r *NamespaceClassReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 	applied, err := r.ApplyDesired(ctx, desired)
 	if err != nil {
-		return ctrl.Result{}, err
+		inventory := ResourceInventoryFromStatus(ctx, &nsclass.Status)
+		maps.Copy(inventory, applied)
+		statusErr := r.UpdateStatus(ctx, nsclass, inventory)
+		return ctrl.Result{}, errors.Join(statusErr, err)
 	}
 
 	// Handle status updates and pruning
