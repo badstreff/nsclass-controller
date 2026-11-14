@@ -111,6 +111,9 @@ func (r *NamespaceClassReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		inventory := ResourceInventoryFromStatus(ctx, &nsclass.Status)
 		maps.Copy(inventory, applied)
 		err = r.UpdateStatus(ctx, nsclass, inventory)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	// This is the poor mans way of ensuring we update the resources if they are ever manually editted... I'll have to research a better way to make this dynamic
@@ -195,7 +198,10 @@ func (r *NamespaceClassReconciler) Prune(ctx context.Context, previous ResourceI
 
 	for key, managed := range previous {
 		if _, ok := desired[key]; ok {
-			inventory[key] = managed
+			// Retain keys are are desired but we failed to apply
+			if _, appliedOK := applied[key]; !appliedOK {
+				inventory[key] = managed
+			}
 			continue
 		}
 		// Resource no longer desired
@@ -222,7 +228,7 @@ func (r *NamespaceClassReconciler) Prune(ctx context.Context, previous ResourceI
 		case err != nil:
 			managed.Phase = new(experimentalv1.PhaseFailed)
 			inventory[key] = managed
-			errs = errors.Join(err, err)
+			errs = errors.Join(errs, err)
 		default:
 			managed.Phase = new(experimentalv1.PhaseDeleting)
 			inventory[key] = managed
