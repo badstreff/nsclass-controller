@@ -1,0 +1,58 @@
+apiVersion: experimental.badstreff.io/v1
+kind: NamespaceClass
+metadata:
+  labels:
+    app.kubernetes.io/name: nsclass-controller
+    app.kubernetes.io/managed-by: kustomize
+  name: namespaceclass-helloworld
+spec:
+  prune: true
+  resources:
+    - apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: namespaceclass-config
+      data:
+        message: "Hello world!"
+    - apiVersion: v1
+      kind: Secret
+      metadata:
+        name: namespaceclass-secret
+      type: Opaque
+      stringData:
+        username: test-user
+        password: test-password
+    - apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata:
+        name: namespaceclass-netpol
+      spec:
+        podSelector:
+          matchLabels:
+            app: namespaceclass-test
+        policyTypes:
+          - Ingress
+        ingress:
+          - from:
+              - podSelector:
+                  matchLabels:
+                    app: namespaceclass-test
+    - apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: namespaceclass-deployment
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            app: namespaceclass-test
+        template:
+          metadata:
+            labels:
+              app: namespaceclass-test
+          spec:
+            containers:
+              - name: nginx
+                image: nginx:stable
+                ports:
+                  - containerPort: 80

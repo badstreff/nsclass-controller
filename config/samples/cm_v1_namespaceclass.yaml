@@ -1,0 +1,16 @@
+apiVersion: experimental.badstreff.io/v1
+kind: NamespaceClass
+metadata:
+  labels:
+    app.kubernetes.io/name: nsclass-controller
+    app.kubernetes.io/managed-by: kustomize
+  name: namespaceclass-cm
+spec:
+  prune: true
+  resources:
+    - apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: namespaceclass-config
+      data:
+        message: "Hello world!"

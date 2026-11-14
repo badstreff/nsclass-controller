@@ -33,15 +33,13 @@ import (
 var _ = Describe("NamespaceClass Controller", func() {
 	Context("When reconciling a resource", func() {
 		const (
-			resourceName      = "test-resource"
-			resourceNamespace = "default"
+			resourceName = "test-resource"
 		)
 
 		ctx := context.Background()
 
 		typeNamespacedName := types.NamespacedName{
-			Name:      resourceName,
-			Namespace: resourceNamespace,
+			Name: resourceName,
 		}
 		namespaceclass := &experimentalv1.NamespaceClass{}
 
@@ -51,8 +49,7 @@ var _ = Describe("NamespaceClass Controller", func() {
 			if err != nil && errors.IsNotFound(err) {
 				resource := &experimentalv1.NamespaceClass{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      resourceName,
-						Namespace: resourceNamespace,
+						Name: resourceName,
 					},
 					// TODO(user): Specify other spec details if needed.
 				}

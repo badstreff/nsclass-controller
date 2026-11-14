@@ -19,6 +19,7 @@ package v1
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
@@ -31,9 +32,14 @@ type NamespaceClassSpec struct {
 	// The following markers will use OpenAPI v3 schema to validate the value
 	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
 
-	// foo is an example field of NamespaceClass. Edit namespaceclass_types.go to remove/update
+	// Prune instructions the controller on if it should delete resources when they are removed from the spec
 	// +optional
-	Foo *string `json:"foo,omitempty"`
+	// +kubebuilder:default=false
+	Prune *bool `json:"prune,omitempty"`
+
+	// +kubebuilder:validation:items:XEmbeddedResource
+	// +kubebuilder:validation:items:XPreserveUnknownFields
+	Resources []runtime.RawExtension `json:"resources,omitempty"`
 }
 
 // NamespaceClassStatus defines the observed state of NamespaceClass.
@@ -57,6 +63,47 @@ type NamespaceClassStatus struct {
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// +listType=map
+	// +listMapKey=apiVersion
+	// +listMapKey=kind
+	// +listMapKey=namespace
+	// +listMapKey=name
+	// +optional
+	ManagedResources []ManagedResource `json:"managedResources,omitempty"`
+}
+
+type ManagedResourcePhase string
+
+const (
+	PhaseApplied  ManagedResourcePhase = "Applied"
+	PhaseDeleting ManagedResourcePhase = "Deleting"
+	PhaseFailed   ManagedResourcePhase = "Failed"
+)
+
+type ManagedResource struct {
+	// +required
+	UID types.UID `json:"uid,omitempty"`
+
+	// +kubebuilder:validation:MinLength=1
+	// +required
+	APIVersion string `json:"apiVersion"`
+
+	// +kubebuilder:validation:MinLength=1
+	// +required
+	Kind string `json:"kind"`
+
+	// +kubebuilder:validation:MinLength=1
+	// +required
+	Namespace string `json:"namespace"`
+
+	// +kubebuilder:validation:MinLength=1
+	// +required
+	Name string `json:"name"`
+
+	// +kubebuilder:validation:Enum=Applied;Deleting;Failed
+	// +optional
+	Phase *ManagedResourcePhase `json:"phase,omitempty"`
 }
 
 // +kubebuilder:object:root=true
