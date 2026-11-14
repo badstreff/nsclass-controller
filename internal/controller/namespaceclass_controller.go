@@ -98,7 +98,7 @@ func (r *NamespaceClassReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	// Handle status updates and pruning
 	// When we prune we return requeue true if any resources were marked as needing to be deleted so we check again pretty quick
-	if *nsclass.Spec.Prune {
+	if nsclass.Spec.Prune != nil && *nsclass.Spec.Prune {
 		log.Info("pruning")
 		previousInventory := ResourceInventoryFromStatus(ctx, &nsclass.Status)
 		requeue, inventory, pruneErr := r.Prune(ctx, previousInventory, desired, applied)
