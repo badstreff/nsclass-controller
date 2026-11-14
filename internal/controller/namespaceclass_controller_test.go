@@ -19,10 +19,11 @@ package controller
 import (
 	"context"
 
+	"errors"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -50,7 +51,7 @@ var _ = Describe("NamespaceClass Controller", func() {
 		BeforeEach(func() {
 			By("creating the custom resource for the Kind NamespaceClass")
 			err := k8sClient.Get(ctx, typeNamespacedName, namespaceclass)
-			if err != nil && errors.IsNotFound(err) {
+			if err != nil && apierrors.IsNotFound(err) {
 				resource := &experimentalv1.NamespaceClass{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: resourceName,
@@ -214,6 +215,34 @@ var _ = Describe("NamespaceClass Controller", func() {
 			// Verify status fields remain
 			Expect(k8sClient.Get(ctx, req.NamespacedName, nsclass)).To(Succeed())
 			Expect(nsclass.Status.ManagedResources).ToNot(BeEmpty())
+		})
+		It("should error on duplicate resources", func() {
+			By("Reconciling the created resource")
+			controllerReconciler := &NamespaceClassReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			req := reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name: resourceName,
+				},
+			}
+			// Add duplicate resource
+			nsclass := &experimentalv1.NamespaceClass{}
+			Expect(k8sClient.Get(ctx, req.NamespacedName, nsclass)).To(Succeed())
+			nsclass.Spec.Resources = append(nsclass.Spec.Resources, runtime.RawExtension{
+				Raw: []byte(`{
+    							    "apiVersion": "v1",
+    							    "kind": "ServiceAccount",
+    							    "metadata": {
+    							        "name": "test-sa"
+    							    }
+    							}`),
+			})
+			Expect(k8sClient.Update(ctx, nsclass)).To(Succeed())
+			// Reconciliation should fail with ErrDuplicateResource
+			_, err := controllerReconciler.Reconcile(ctx, req)
+			Expect(errors.Is(err, ErrDuplicateResource)).To(Equal(true))
 		})
 	})
 })

@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"slices"
 	"time"
@@ -50,6 +51,7 @@ const fieldManager = "namespace-class-controller"
 
 var (
 	NamespaceClassReconciliationLabel = experimentalv1.GroupVersion.Group + "/namespace-class"
+	ErrDuplicateResource              = errors.New("duplicate resource")
 )
 
 type ResourceKey struct {
@@ -140,8 +142,8 @@ func (r *NamespaceClassReconciler) listNamespaces(ctx context.Context, nsclass *
 	return namespaces, nil
 }
 
+// BuildDesired returns the resources that need applied or an Error if we find any duplicated
 func (r *NamespaceClassReconciler) BuildDesired(ctx context.Context, nsclass *experimentalv1.NamespaceClass) (map[ResourceKey]*unstructured.Unstructured, error) {
-	// TODO: Right now we silently overwrite duplicate entries in the desired state, we might want to return an error of someone submits duplicate resources instead
 	namespaces, err := r.listNamespaces(ctx, nsclass)
 	if err != nil {
 		return nil, err
@@ -160,6 +162,9 @@ func (r *NamespaceClassReconciler) BuildDesired(ctx context.Context, nsclass *ex
 			key := ResourceKey{
 				GVK:            obj.GroupVersionKind(),
 				NamespacedName: client.ObjectKeyFromObject(obj),
+			}
+			if _, ok := desired[key]; ok {
+				return nil, fmt.Errorf("%w: %v", ErrDuplicateResource, key)
 			}
 			desired[key] = obj
 		}
