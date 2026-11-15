@@ -154,38 +154,55 @@ var _ = Describe("NamespaceClass Controller", func() {
 					Name: resourceName,
 				},
 			}
-			key := types.NamespacedName{Namespace: TestNamespaceName, Name: TestConfigMapName}
+			cmKey := types.NamespacedName{Namespace: TestNamespaceName, Name: TestConfigMapName}
+			saKey := types.NamespacedName{Namespace: TestNamespaceName, Name: TestServiceAccountName}
 			_, err := controllerReconciler.Reconcile(ctx, req)
 			Expect(err).NotTo(HaveOccurred())
 
 			nsclass := &experimentalv1.NamespaceClass{}
 			Expect(k8sClient.Get(ctx, req.NamespacedName, nsclass)).To(Succeed())
 
-			// Check the CM is created on first reconciliation
+			// Check the resources are created on first reconciliation
 			cm := &corev1.ConfigMap{}
-			Expect(k8sClient.Get(ctx, key, cm)).To(Succeed())
+			Expect(k8sClient.Get(ctx, cmKey, cm)).To(Succeed())
+			sa := &corev1.ServiceAccount{}
+			Expect(k8sClient.Get(ctx, saKey, sa)).To(Succeed())
 
-			// Remove resources form the spec
-			nsclass.Spec.Resources = nil
+			// Remove only CM from the spec
+			nsclass.Spec.Resources = nsclass.Spec.Resources[1:]
 			Expect(k8sClient.Update(ctx, nsclass)).To(Succeed())
 
 			// Reconcile again to trigger pruning.
 			_, err = controllerReconciler.Reconcile(ctx, req)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Verify the ConfigMap was deleted
+			// Verify the ConfigMap was deleted and SA remains
 			Eventually(func() bool {
-				err := k8sClient.Get(ctx, key, cm)
+				err := k8sClient.Get(ctx, cmKey, cm)
 				return apierrors.IsNotFound(err)
 			}).Should(BeTrue())
+			Expect(k8sClient.Get(ctx, saKey, sa)).To(Succeed())
 
 			// Reconcile again to clear the inventory entry
 			_, err = controllerReconciler.Reconcile(ctx, req)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Verify status no longer tracks the resources
+			// Verify status reports the SA but not the CM
 			Expect(k8sClient.Get(ctx, req.NamespacedName, nsclass)).To(Succeed())
-			Expect(nsclass.Status.ManagedResources).To(BeEmpty())
+			Expect(nsclass.Status.ManagedResources).To(
+				ContainElement(And(
+					HaveField("Kind", "ServiceAccount"),
+					HaveField("Name", TestServiceAccountName),
+					HaveField("Namespace", TestNamespaceName),
+				)),
+			)
+			Expect(nsclass.Status.ManagedResources).ToNot(
+				ContainElement(And(
+					HaveField("Kind", "ConfigMap"),
+					HaveField("Name", TestConfigMapName),
+					HaveField("Namespace", TestNamespaceName),
+				)),
+			)
 		})
 		It("should leave resources and status when prune is disabled", func() {
 			By("Reconciling the created resource")
