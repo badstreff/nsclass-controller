@@ -94,10 +94,21 @@ func (r *NamespaceClassReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	log.V(1).Info("building desired state")
 	desired, err := r.BuildDesired(ctx, nsclass)
 	if err != nil {
+		if errors.Is(err, ErrDuplicateResource) {
+			condition := &metav1.Condition{
+				Type:               ConditionTypeAccepted,
+				Status:             metav1.ConditionFalse,
+				Reason:             "DuplicateResource",
+				Message:            err.Error(),
+				ObservedGeneration: nsclass.Generation,
+			}
+			err = r.UpdateStatus(ctx, nsclass, inventory, condition)
+			return ctrl.Result{}, err
+		}
 		condition := &metav1.Condition{
 			Type:               ConditionTypeAccepted,
 			Status:             metav1.ConditionFalse,
-			Reason:             "DuplicateResource",
+			Reason:             "BuildDesiredStateFailed",
 			Message:            err.Error(),
 			ObservedGeneration: nsclass.Generation,
 		}
