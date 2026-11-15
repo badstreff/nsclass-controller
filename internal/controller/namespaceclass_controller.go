@@ -164,15 +164,18 @@ func (r *NamespaceClassReconciler) BuildDesired(ctx context.Context, nsclass *ex
 		}
 		duplicate[key] = obj
 		for _, namespace := range namespaces.Items {
-			obj.SetNamespace(namespace.Name)
-			if err := controllerutil.SetControllerReference(nsclass, obj, r.Scheme); err != nil {
+			resource := obj.DeepCopy()
+			resource.SetNamespace(namespace.Name)
+			if err := controllerutil.SetControllerReference(
+				nsclass, resource, r.Scheme,
+			); err != nil {
 				return nil, err
 			}
 			key := ResourceKey{
-				GVK:            obj.GroupVersionKind(),
-				NamespacedName: client.ObjectKeyFromObject(obj),
+				GVK:            resource.GroupVersionKind(),
+				NamespacedName: client.ObjectKeyFromObject(resource),
 			}
-			desired[key] = obj
+			desired[key] = resource
 		}
 	}
 	return desired, nil
