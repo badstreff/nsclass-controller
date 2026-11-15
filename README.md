@@ -50,5 +50,6 @@ The chart creates a ClusterRole by default (`rbac.namespaced: false`) so the con
 Examples can be found under `config/samples/`
 
 # TODOs
-- [ ] Check resources to ensure only namespace scoped resources are present
+
 - [ ] Instead of requeuing every resource, find a way to dynamically watch generated resources
+- [ ] Ensure when a namespace switches classes that would create the same resources the old `NamespaceClass` does not delete them
