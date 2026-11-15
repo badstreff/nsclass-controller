@@ -728,5 +728,91 @@ var _ = Describe("NamespaceClass Controller", func() {
 			Expect(condition.Reason).To(Equal("DuplicateResource"))
 			Expect(condition.ObservedGeneration).To(Equal(nsclass.Generation))
 		})
+		It("should track pruning until a resource is fully deleted", func() {
+			controllerReconciler := &NamespaceClassReconciler{
+				Client:     k8sClient,
+				Scheme:     k8sClient.Scheme(),
+				RESTMapper: k8sClient.RESTMapper(),
+			}
+			req := reconcile.Request{NamespacedName: nsclassKey}
+
+			// Create managed resources.
+			_, err := controllerReconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			cmKey := types.NamespacedName{
+				Namespace: TestNamespaceName,
+				Name:      TestConfigMapName,
+			}
+
+			// Add a finalizer so deletion cannot complete immediately.
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, cmKey, cm)).To(Succeed())
+
+			cm.Finalizers = append(cm.Finalizers, "example.com/prune-test")
+			Expect(k8sClient.Update(ctx, cm)).To(Succeed())
+
+			DeferCleanup(func() {
+				current := &corev1.ConfigMap{}
+				err := k8sClient.Get(ctx, cmKey, current)
+				if apierrors.IsNotFound(err) {
+					return
+				}
+				Expect(err).NotTo(HaveOccurred())
+
+				current.Finalizers = nil
+				Expect(k8sClient.Update(ctx, current)).To(Succeed())
+				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, current))).To(Succeed())
+			})
+
+			// Remove ConfigMap from desired resources.
+			nsclass := &experimentalv1.NamespaceClass{}
+			Expect(k8sClient.Get(ctx, nsclassKey, nsclass)).To(Succeed())
+
+			nsclass.Spec.Resources = nsclass.Spec.Resources[1:]
+			Expect(k8sClient.Update(ctx, nsclass)).To(Succeed())
+
+			// Pruning starts but cannot finish because of the finalizer.
+			result, err := controllerReconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
+
+			Expect(k8sClient.Get(ctx, nsclassKey, nsclass)).To(Succeed())
+
+			condition := meta.FindStatusCondition(
+				nsclass.Status.Conditions,
+				ConditionTypePruned,
+			)
+
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(condition.Reason).To(Equal("Pruning"))
+
+			// Allow deletion to complete.
+			Expect(k8sClient.Get(ctx, cmKey, cm)).To(Succeed())
+			cm.Finalizers = nil
+			Expect(k8sClient.Update(ctx, cm)).To(Succeed())
+
+			Eventually(func() bool {
+				return apierrors.IsNotFound(
+					k8sClient.Get(ctx, cmKey, &corev1.ConfigMap{}),
+				)
+			}).Should(BeTrue())
+
+			// Reconcile again and confirm pruning is complete.
+			_, err = controllerReconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(ctx, nsclassKey, nsclass)).To(Succeed())
+
+			condition = meta.FindStatusCondition(
+				nsclass.Status.Conditions,
+				ConditionTypePruned,
+			)
+
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Status).To(Equal(metav1.ConditionTrue))
+			Expect(condition.Reason).To(Equal("PruneSuccessful"))
+		})
 	})
 })
