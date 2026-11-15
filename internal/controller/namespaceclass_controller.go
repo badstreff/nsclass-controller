@@ -57,6 +57,7 @@ const (
 var (
 	NamespaceClassReconciliationLabel = experimentalv1.GroupVersion.Group + "/namespace-class"
 	ErrDuplicateResource              = errors.New("duplicate resource")
+	ErrGlobalResource                 = errors.New("global resource not supported")
 )
 
 type ResourceKey struct {
@@ -69,7 +70,8 @@ type ResourceInventory map[ResourceKey]experimentalv1.ManagedResource
 // NamespaceClassReconciler reconciles a NamespaceClass object
 type NamespaceClassReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme     *runtime.Scheme
+	RESTMapper meta.RESTMapper
 }
 
 // +kubebuilder:rbac:groups=experimental.badstreff.io,resources=namespaceclasses,verbs=get;list;watch;create;update;patch;delete
@@ -99,6 +101,17 @@ func (r *NamespaceClassReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				Type:               ConditionTypeAccepted,
 				Status:             metav1.ConditionFalse,
 				Reason:             "DuplicateResource",
+				Message:            err.Error(),
+				ObservedGeneration: nsclass.Generation,
+			}
+			err = r.UpdateStatus(ctx, nsclass, inventory, condition)
+			return ctrl.Result{}, err
+		}
+		if errors.Is(err, ErrGlobalResource) {
+			condition := &metav1.Condition{
+				Type:               ConditionTypeAccepted,
+				Status:             metav1.ConditionFalse,
+				Reason:             "GlobalResource",
 				Message:            err.Error(),
 				ObservedGeneration: nsclass.Generation,
 			}
@@ -198,6 +211,23 @@ func (r *NamespaceClassReconciler) listNamespaces(ctx context.Context, nsclass *
 	return namespaces, nil
 }
 
+// IsNamespaced is a helper utility used to check if an object is a Global resource or not
+func (r *NamespaceClassReconciler) IsNamespaced(
+	obj *unstructured.Unstructured,
+) (bool, error) {
+	gvk := obj.GroupVersionKind()
+
+	mapping, err := r.RESTMapper.RESTMapping(
+		gvk.GroupKind(),
+		gvk.Version,
+	)
+	if err != nil {
+		return false, err
+	}
+
+	return mapping.Scope.Name() == meta.RESTScopeNameNamespace, nil
+}
+
 // BuildDesired returns the resources that need applied or an Error if we find any duplicated
 func (r *NamespaceClassReconciler) BuildDesired(ctx context.Context, nsclass *experimentalv1.NamespaceClass) (map[ResourceKey]*unstructured.Unstructured, error) {
 	namespaces, err := r.listNamespaces(ctx, nsclass)
@@ -215,6 +245,13 @@ func (r *NamespaceClassReconciler) BuildDesired(ctx context.Context, nsclass *ex
 		key := ResourceKey{
 			GVK:            obj.GroupVersionKind(),
 			NamespacedName: client.ObjectKeyFromObject(obj),
+		}
+		namespaced, err := r.IsNamespaced(obj)
+		if err != nil {
+			return nil, fmt.Errorf("resolve resource scope: %w", err)
+		}
+		if !namespaced {
+			return nil, fmt.Errorf("%w: %v", ErrGlobalResource, key)
 		}
 		if _, ok := duplicate[key]; ok {
 			return nil, fmt.Errorf("%w: %v", ErrDuplicateResource, key)

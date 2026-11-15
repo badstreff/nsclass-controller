@@ -125,8 +125,9 @@ var _ = Describe("NamespaceClass Controller", func() {
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
 			controllerReconciler := &NamespaceClassReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:     k8sClient,
+				Scheme:     k8sClient.Scheme(),
+				RESTMapper: k8sClient.RESTMapper(),
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
@@ -145,8 +146,9 @@ var _ = Describe("NamespaceClass Controller", func() {
 		It("should successfully prune the resource", func() {
 			By("Reconciling the created resource")
 			controllerReconciler := &NamespaceClassReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:     k8sClient,
+				Scheme:     k8sClient.Scheme(),
+				RESTMapper: k8sClient.RESTMapper(),
 			}
 			req := reconcile.Request{
 				NamespacedName: types.NamespacedName{
@@ -205,8 +207,9 @@ var _ = Describe("NamespaceClass Controller", func() {
 		})
 		It("should prune resources when the namespace label is removed", func() {
 			controllerReconciler := &NamespaceClassReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:     k8sClient,
+				Scheme:     k8sClient.Scheme(),
+				RESTMapper: k8sClient.RESTMapper(),
 			}
 			req := reconcile.Request{NamespacedName: nsclassKey}
 
@@ -260,8 +263,9 @@ var _ = Describe("NamespaceClass Controller", func() {
 		})
 		It("should not prune a resource replaced with a different UID", func() {
 			controllerReconciler := &NamespaceClassReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:     k8sClient,
+				Scheme:     k8sClient.Scheme(),
+				RESTMapper: k8sClient.RESTMapper(),
 			}
 			req := reconcile.Request{NamespacedName: nsclassKey}
 
@@ -310,8 +314,9 @@ var _ = Describe("NamespaceClass Controller", func() {
 		})
 		It("should preserve successful applies when another resource fails", func() {
 			controllerReconciler := &NamespaceClassReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:     k8sClient,
+				Scheme:     k8sClient.Scheme(),
+				RESTMapper: k8sClient.RESTMapper(),
 			}
 			req := reconcile.Request{NamespacedName: nsclassKey}
 
@@ -361,8 +366,9 @@ var _ = Describe("NamespaceClass Controller", func() {
 		It("should leave resources and status when prune is disabled", func() {
 			By("Reconciling the created resource")
 			controllerReconciler := &NamespaceClassReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:     k8sClient,
+				Scheme:     k8sClient.Scheme(),
+				RESTMapper: k8sClient.RESTMapper(),
 			}
 			req := reconcile.Request{
 				NamespacedName: types.NamespacedName{
@@ -397,8 +403,9 @@ var _ = Describe("NamespaceClass Controller", func() {
 		It("should error on duplicate resources", func() {
 			By("Reconciling the created resource")
 			controllerReconciler := &NamespaceClassReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:     k8sClient,
+				Scheme:     k8sClient.Scheme(),
+				RESTMapper: k8sClient.RESTMapper(),
 			}
 			req := reconcile.Request{
 				NamespacedName: types.NamespacedName{
@@ -432,10 +439,49 @@ var _ = Describe("NamespaceClass Controller", func() {
 			Expect(condition.Reason).To(Equal("DuplicateResource"))
 			Expect(condition.ObservedGeneration).To(Equal(nsclass.Generation))
 		})
+		It("should error on global/cluster-scoped resources", func() {
+			controllerReconciler := &NamespaceClassReconciler{
+				Client:     k8sClient,
+				Scheme:     k8sClient.Scheme(),
+				RESTMapper: k8sClient.RESTMapper(),
+			}
+			req := reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name: resourceName,
+				},
+			}
+			// Add global resource
+			nsclass := &experimentalv1.NamespaceClass{}
+			Expect(k8sClient.Get(ctx, req.NamespacedName, nsclass)).To(Succeed())
+			nsclass.Spec.Resources = append(nsclass.Spec.Resources, runtime.RawExtension{
+				Raw: []byte(`{
+    							    "apiVersion": "v1",
+    							    "kind": "Namespace",
+    							    "metadata": {
+                    			        "name": "demo"
+    							    }
+    							}`),
+			})
+			Expect(k8sClient.Update(ctx, nsclass)).To(Succeed())
+
+			// Reconciliation should not fail but set the status condition correctly
+			_, err := controllerReconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Get(ctx, nsclassKey, nsclass)).To(Succeed())
+			condition := meta.FindStatusCondition(
+				nsclass.Status.Conditions,
+				ConditionTypeAccepted,
+			)
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(condition.Reason).To(Equal("GlobalResource"))
+			Expect(condition.ObservedGeneration).To(Equal(nsclass.Generation))
+		})
 		It("should correct manually modified resource data", func() {
 			controllerReconciler := &NamespaceClassReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:     k8sClient,
+				Scheme:     k8sClient.Scheme(),
+				RESTMapper: k8sClient.RESTMapper(),
 			}
 			req := reconcile.Request{NamespacedName: nsclassKey}
 
@@ -463,8 +509,9 @@ var _ = Describe("NamespaceClass Controller", func() {
 		})
 		It("should not change status when reconciling unchanged resources", func() {
 			controllerReconciler := &NamespaceClassReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:     k8sClient,
+				Scheme:     k8sClient.Scheme(),
+				RESTMapper: k8sClient.RESTMapper(),
 			}
 			req := reconcile.Request{NamespacedName: nsclassKey}
 
@@ -499,8 +546,9 @@ var _ = Describe("NamespaceClass Controller", func() {
 		})
 		It("should override the namespace specified in a resource template", func() {
 			controllerReconciler := &NamespaceClassReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:     k8sClient,
+				Scheme:     k8sClient.Scheme(),
+				RESTMapper: k8sClient.RESTMapper(),
 			}
 			req := reconcile.Request{NamespacedName: nsclassKey}
 
@@ -539,8 +587,9 @@ var _ = Describe("NamespaceClass Controller", func() {
 		})
 		It("should apply resources only to matching namespaces", func() {
 			controllerReconciler := &NamespaceClassReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:     k8sClient,
+				Scheme:     k8sClient.Scheme(),
+				RESTMapper: k8sClient.RESTMapper(),
 			}
 			req := reconcile.Request{NamespacedName: nsclassKey}
 
@@ -615,8 +664,9 @@ var _ = Describe("NamespaceClass Controller", func() {
 		})
 		It("should succeed when the NamespaceClass no longer exists", func() {
 			controllerReconciler := &NamespaceClassReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:     k8sClient,
+				Scheme:     k8sClient.Scheme(),
+				RESTMapper: k8sClient.RESTMapper(),
 			}
 
 			req := reconcile.Request{
@@ -632,8 +682,9 @@ var _ = Describe("NamespaceClass Controller", func() {
 		})
 		It("should reject duplicate templates even without matching namespaces", func() {
 			controllerReconciler := &NamespaceClassReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:     k8sClient,
+				Scheme:     k8sClient.Scheme(),
+				RESTMapper: k8sClient.RESTMapper(),
 			}
 			req := reconcile.Request{NamespacedName: nsclassKey}
 

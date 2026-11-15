@@ -185,8 +185,9 @@ func main() {
 	}
 
 	if err := (&controller.NamespaceClassReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		RESTMapper: mgr.GetRESTMapper(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "namespaceclass")
 		os.Exit(1)
