@@ -88,6 +88,7 @@ func (r *NamespaceClassReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// Build and Apply desired state
 	desired, err := r.BuildDesired(ctx, nsclass)
 	if err != nil {
+		// TODO: Consider checking for duplicate resource and stopping reconciliation... for now we just return it as a convenient way to test
 		return ctrl.Result{}, err
 	}
 	applied, err := r.ApplyDesired(ctx, desired)
