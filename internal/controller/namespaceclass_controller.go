@@ -164,7 +164,7 @@ func (r *NamespaceClassReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			log.Error(err, "prune error")
 			return ctrl.Result{}, err
 		}
-		err = r.UpdateStatus(ctx, nsclass, applied, nil)
+		err = r.UpdateStatus(ctx, nsclass, inventory, nil)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
