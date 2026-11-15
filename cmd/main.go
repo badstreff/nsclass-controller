@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -64,6 +65,8 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var tlsOpts []func(*tls.Config)
+	var defaultRequeue int
+	var dynamicWatch bool
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -83,6 +86,8 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	flag.IntVar(&defaultRequeue, "default-requeue", 600, "Default time in seconds to requeue reconciliation, set this much higher if enabling --dynamic-watch")
+	flag.BoolVar(&dynamicWatch, "dynamic-watch", false, "Start watching each resource type we create, when watching lots of types or types that receive lots of updates you may want to consider turning this off and reconciling on a cadence instead")
 	opts := zap.Options{
 		Development: true,
 		Level:       zapcore.DebugLevel,
@@ -185,9 +190,11 @@ func main() {
 	}
 
 	if err := (&controller.NamespaceClassReconciler{
-		Client:     mgr.GetClient(),
-		Scheme:     mgr.GetScheme(),
-		RESTMapper: mgr.GetRESTMapper(),
+		Client:         mgr.GetClient(),
+		Scheme:         mgr.GetScheme(),
+		RESTMapper:     mgr.GetRESTMapper(),
+		DefaultRequeue: time.Second * time.Duration(defaultRequeue),
+		DynamicWatch:   dynamicWatch,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "namespaceclass")
 		os.Exit(1)

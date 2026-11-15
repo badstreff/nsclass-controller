@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"sync"
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -31,12 +32,15 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	experimentalv1 "github.com/badstreff/nsclass-controller/api/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -73,6 +77,15 @@ type NamespaceClassReconciler struct {
 	client.Client
 	Scheme     *runtime.Scheme
 	RESTMapper meta.RESTMapper
+
+	DefaultRequeue time.Duration
+
+	// Dynamic resource watches
+	DynamicWatch bool
+	controller   controller.Controller
+	cache        cache.Cache
+	watchMu      sync.Mutex
+	watched      map[schema.GroupVersionKind]struct{}
 }
 
 // +kubebuilder:rbac:groups=experimental.badstreff.io,resources=namespaceclasses,verbs=get;list;watch;create;update;patch;delete
@@ -138,6 +151,14 @@ func (r *NamespaceClassReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 		if err := r.UpdateStatus(ctx, nsclass, inventory, condition); err != nil {
 			return ctrl.Result{}, err
+		}
+	}
+
+	if r.DynamicWatch {
+		for key := range desired {
+			if err := r.WatchGVK(key.GVK); err != nil {
+				return ctrl.Result{}, err
+			}
 		}
 	}
 
@@ -225,9 +246,7 @@ func (r *NamespaceClassReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 	}
 
-	// This is the poor mans way of ensuring we update the resources if they are ever manually editted... I'll have to research a better way to make this dynamic
-	// TODO: Figure out a way to do this that doesn't require just requeueing every resource every 5 min
-	return ctrl.Result{RequeueAfter: time.Minute * 5}, nil
+	return ctrl.Result{RequeueAfter: r.DefaultRequeue}, nil
 }
 
 // ListNamespaces returns the namespaces associated with a namespace class
@@ -485,9 +504,41 @@ func (r *NamespaceClassReconciler) mapNamespaceToNamespaceClass(ctx context.Cont
 	return []reconcile.Request{}
 }
 
+func (r *NamespaceClassReconciler) WatchGVK(
+	gvk schema.GroupVersionKind,
+) error {
+	r.watchMu.Lock()
+	defer r.watchMu.Unlock()
+
+	if _, exists := r.watched[gvk]; exists {
+		return nil
+	}
+
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(gvk)
+
+	err := r.controller.Watch(source.Kind(
+		r.cache,
+		obj,
+		handler.TypedEnqueueRequestForOwner[*unstructured.Unstructured](
+			r.Scheme,
+			r.RESTMapper,
+			&experimentalv1.NamespaceClass{},
+			handler.OnlyControllerOwner(),
+		),
+		predicate.TypedResourceVersionChangedPredicate[*unstructured.Unstructured]{},
+	))
+	if err != nil {
+		return err
+	}
+
+	r.watched[gvk] = struct{}{}
+	return nil
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *NamespaceClassReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
+	ctrl, err := ctrl.NewControllerManagedBy(mgr).
 		For(
 			&experimentalv1.NamespaceClass{},
 			builder.WithPredicates(predicate.GenerationChangedPredicate{}),
@@ -498,5 +549,15 @@ func (r *NamespaceClassReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(r.mapNamespaceToNamespaceClass),
 		).
 		Owns(&networkingv1.NetworkPolicy{}).
-		Complete(r)
+		Build(r)
+
+	if err != nil {
+		return err
+	}
+
+	r.watchMu = sync.Mutex{}
+	r.controller = ctrl
+	r.cache = mgr.GetCache()
+	r.watched = make(map[schema.GroupVersionKind]struct{})
+	return nil
 }
