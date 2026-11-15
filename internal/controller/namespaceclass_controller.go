@@ -43,11 +43,16 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-const fieldManager = "namespace-class-controller"
+const (
+	fieldManager          = "namespace-class-controller"
+	ConditionTypeAccepted = "Accepted"
+	ConditionTypeReady    = "Ready"
+)
 
 var (
 	NamespaceClassReconciliationLabel = experimentalv1.GroupVersion.Group + "/namespace-class"
@@ -83,40 +88,76 @@ func (r *NamespaceClassReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	if err := r.Get(ctx, req.NamespacedName, nsclass); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	inventory := ResourceInventoryFromStatus(ctx, &nsclass.Status)
 
-	// Build and Apply desired state
+	// Build desired state
+	log.V(1).Info("building desired state")
 	desired, err := r.BuildDesired(ctx, nsclass)
 	if err != nil {
-		// TODO: Consider checking for duplicate resource and stopping reconciliation... for now we just return it as a convenient way to test
+		condition := &metav1.Condition{
+			Type:               ConditionTypeAccepted,
+			Status:             metav1.ConditionFalse,
+			Reason:             "DuplicateResource",
+			Message:            err.Error(),
+			ObservedGeneration: nsclass.Generation,
+		}
+		err = r.UpdateStatus(ctx, nsclass, inventory, condition)
 		return ctrl.Result{}, err
-	}
-	applied, err := r.ApplyDesired(ctx, desired)
-	if err != nil {
-		inventory := ResourceInventoryFromStatus(ctx, &nsclass.Status)
-		maps.Copy(inventory, applied)
-		statusErr := r.UpdateStatus(ctx, nsclass, inventory)
-		return ctrl.Result{}, errors.Join(statusErr, err)
+	} else {
+		condition := &metav1.Condition{
+			Type:               ConditionTypeAccepted,
+			Status:             metav1.ConditionTrue,
+			Reason:             "",
+			Message:            "",
+			ObservedGeneration: nsclass.Generation,
+		}
+		r.UpdateStatus(ctx, nsclass, inventory, condition)
 	}
 
-	// Handle status updates and pruning
+	// Apply desired state
+	log.V(1).Info("applying desired state")
+	applied, err := r.ApplyDesired(ctx, desired)
+	inventory = ResourceInventoryFromStatus(ctx, &nsclass.Status)
+	maps.Copy(inventory, applied)
+	if err != nil {
+		condition := &metav1.Condition{
+			Type:               ConditionTypeReady,
+			Status:             metav1.ConditionFalse,
+			Reason:             "ApplyFailed",
+			Message:            err.Error(),
+			ObservedGeneration: nsclass.Generation,
+		}
+		statusErr := r.UpdateStatus(ctx, nsclass, inventory, condition)
+		return ctrl.Result{}, errors.Join(statusErr, err)
+	} else {
+		condition := &metav1.Condition{
+			Type:               ConditionTypeReady,
+			Status:             metav1.ConditionTrue,
+			Reason:             "",
+			Message:            "",
+			ObservedGeneration: nsclass.Generation,
+		}
+		r.UpdateStatus(ctx, nsclass, inventory, condition)
+	}
+
+	// Prune resources if pruning is enabled
 	// When we prune we return requeue true if any resources were marked as needing to be deleted so we check again pretty quick
 	if nsclass.Spec.Prune != nil && *nsclass.Spec.Prune {
-		log.Info("pruning")
-		inventory := ResourceInventoryFromStatus(ctx, &nsclass.Status)
-		maps.Copy(inventory, applied)
-		requeue, pruneErr := r.Prune(ctx, inventory, desired)
-		statusErr := r.UpdateStatus(ctx, nsclass, inventory)
-		if pruneErr != nil || statusErr != nil {
-			log.Info("prune error")
-			return ctrl.Result{}, errors.Join(pruneErr, statusErr)
+		log.V(1).Info("pruning removed resources")
+		requeue, err := r.Prune(ctx, inventory, desired)
+		if err != nil {
+			log.Error(err, "prune error")
+			return ctrl.Result{}, err
+		}
+		err = r.UpdateStatus(ctx, nsclass, inventory, nil)
+		if err != nil {
+			return ctrl.Result{}, err
 		}
 		if requeue {
 			return ctrl.Result{RequeueAfter: time.Second * 10}, nil
 		}
 	} else {
-		inventory := ResourceInventoryFromStatus(ctx, &nsclass.Status)
-		maps.Copy(inventory, applied)
-		err = r.UpdateStatus(ctx, nsclass, inventory)
+		err = r.UpdateStatus(ctx, nsclass, inventory, nil)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -151,6 +192,7 @@ func (r *NamespaceClassReconciler) BuildDesired(ctx context.Context, nsclass *ex
 	desired := make(map[ResourceKey]*unstructured.Unstructured, len(nsclass.Spec.Resources)*len(namespaces.Items))
 	duplicate := make(map[ResourceKey]*unstructured.Unstructured, len(nsclass.Spec.Resources)*len(namespaces.Items))
 	for _, rawResource := range nsclass.Spec.Resources {
+		// First check if we have the any duplicates
 		obj := &unstructured.Unstructured{}
 		if err := json.Unmarshal(rawResource.Raw, &obj.Object); err != nil {
 			return nil, err
@@ -163,6 +205,7 @@ func (r *NamespaceClassReconciler) BuildDesired(ctx context.Context, nsclass *ex
 			return nil, fmt.Errorf("%w: %v", ErrDuplicateResource, key)
 		}
 		duplicate[key] = obj
+		// If not go ahead and build the desired list
 		for _, namespace := range namespaces.Items {
 			resource := obj.DeepCopy()
 			resource.SetNamespace(namespace.Name)
@@ -301,6 +344,7 @@ func (r *NamespaceClassReconciler) UpdateStatus(
 	ctx context.Context,
 	nsclass *experimentalv1.NamespaceClass,
 	inventory ResourceInventory,
+	condition *metav1.Condition,
 ) error {
 	original := nsclass.DeepCopy()
 
@@ -324,9 +368,15 @@ func (r *NamespaceClassReconciler) UpdateStatus(
 		)
 	})
 	nsclass.Status.ManagedResources = resources
+	if condition != nil {
+		meta.SetStatusCondition(
+			&nsclass.Status.Conditions,
+			*condition,
+		)
+	}
 	if equality.Semantic.DeepEqual(
-		original.Status.ManagedResources,
-		nsclass.Status.ManagedResources,
+		original.Status,
+		nsclass.Status,
 	) {
 		return nil
 	}

@@ -19,12 +19,11 @@ package controller
 import (
 	"context"
 
-	"errors"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -419,9 +418,19 @@ var _ = Describe("NamespaceClass Controller", func() {
     							}`),
 			})
 			Expect(k8sClient.Update(ctx, nsclass)).To(Succeed())
-			// Reconciliation should fail with ErrDuplicateResource
+
+			// Reconciliation should not fail but set the status condition correctly
 			_, err := controllerReconciler.Reconcile(ctx, req)
-			Expect(errors.Is(err, ErrDuplicateResource)).To(BeTrue())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Get(ctx, typeNamespacedName, nsclass)).To(Succeed())
+			condition := meta.FindStatusCondition(
+				nsclass.Status.Conditions,
+				ConditionTypeAccepted,
+			)
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(condition.Reason).To(Equal("DuplicateResource"))
+			Expect(condition.ObservedGeneration).To(Equal(nsclass.Generation))
 		})
 		It("should correct manually modified resource data", func() {
 			r := &NamespaceClassReconciler{
@@ -655,8 +664,18 @@ var _ = Describe("NamespaceClass Controller", func() {
 			)
 			Expect(k8sClient.Update(ctx, nsclass)).To(Succeed())
 
+			// Reconciliation should not fail but set the status condition correctly
 			_, err := r.Reconcile(ctx, req)
-			Expect(errors.Is(err, ErrDuplicateResource)).To(BeTrue())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Get(ctx, typeNamespacedName, nsclass)).To(Succeed())
+			condition := meta.FindStatusCondition(
+				nsclass.Status.Conditions,
+				ConditionTypeAccepted,
+			)
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(condition.Reason).To(Equal("DuplicateResource"))
+			Expect(condition.ObservedGeneration).To(Equal(nsclass.Generation))
 		})
 	})
 })
