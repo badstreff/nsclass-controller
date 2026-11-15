@@ -204,6 +204,161 @@ var _ = Describe("NamespaceClass Controller", func() {
 				)),
 			)
 		})
+		It("should prune resources when the namespace label is removed", func() {
+			r := &NamespaceClassReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			req := reconcile.Request{NamespacedName: typeNamespacedName}
+
+			_, err := r.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			ns := &corev1.Namespace{}
+			nsKey := types.NamespacedName{Name: TestNamespaceName}
+			Expect(k8sClient.Get(ctx, nsKey, ns)).To(Succeed())
+
+			delete(ns.Labels, NamespaceClassReconciliationLabel)
+			Expect(k8sClient.Update(ctx, ns)).To(Succeed())
+
+			// Restore the shared test namespace after this spec.
+			DeferCleanup(func() {
+				current := &corev1.Namespace{}
+				Expect(k8sClient.Get(ctx, nsKey, current)).To(Succeed())
+				if current.Labels == nil {
+					current.Labels = map[string]string{}
+				}
+				current.Labels[NamespaceClassReconciliationLabel] = TestNamespaceClassName
+				Expect(k8sClient.Update(ctx, current)).To(Succeed())
+			})
+
+			_, err = r.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = r.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			cmKey := types.NamespacedName{
+				Namespace: TestNamespaceName,
+				Name:      TestConfigMapName,
+			}
+			saKey := types.NamespacedName{
+				Namespace: TestNamespaceName,
+				Name:      TestServiceAccountName,
+			}
+
+			Expect(apierrors.IsNotFound(
+				k8sClient.Get(ctx, cmKey, &corev1.ConfigMap{}),
+			)).To(BeTrue())
+
+			Expect(apierrors.IsNotFound(
+				k8sClient.Get(ctx, saKey, &corev1.ServiceAccount{}),
+			)).To(BeTrue())
+
+			nsclass := &experimentalv1.NamespaceClass{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, nsclass)).To(Succeed())
+			Expect(nsclass.Status.ManagedResources).To(BeEmpty())
+		})
+		It("should not prune a resource replaced with a different UID", func() {
+			r := &NamespaceClassReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			req := reconcile.Request{NamespacedName: typeNamespacedName}
+
+			_, err := r.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			cmKey := types.NamespacedName{
+				Namespace: TestNamespaceName,
+				Name:      TestConfigMapName,
+			}
+
+			original := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, cmKey, original)).To(Succeed())
+			originalUID := original.UID
+
+			Expect(k8sClient.Delete(ctx, original)).To(Succeed())
+
+			replacement := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      TestConfigMapName,
+					Namespace: TestNamespaceName,
+				},
+				Data: map[string]string{"message": "replacement"},
+			}
+			Expect(k8sClient.Create(ctx, replacement)).To(Succeed())
+			Expect(replacement.UID).NotTo(Equal(originalUID))
+
+			nsclass := &experimentalv1.NamespaceClass{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, nsclass)).To(Succeed())
+
+			// Remove the ConfigMap from desired state.
+			nsclass.Spec.Resources = nsclass.Spec.Resources[1:]
+			Expect(k8sClient.Update(ctx, nsclass)).To(Succeed())
+
+			_, err = r.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			actual := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, cmKey, actual)).To(Succeed())
+			Expect(actual.UID).To(Equal(replacement.UID))
+			Expect(actual.Data["message"]).To(Equal("replacement"))
+
+			Expect(k8sClient.Get(ctx, typeNamespacedName, nsclass)).To(Succeed())
+			Expect(nsclass.Status.ManagedResources).To(HaveLen(1))
+			Expect(nsclass.Status.ManagedResources[0].Kind).To(Equal("ServiceAccount"))
+		})
+		It("should preserve successful applies when another resource fails", func() {
+			r := &NamespaceClassReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			req := reconcile.Request{NamespacedName: typeNamespacedName}
+
+			nsclass := &experimentalv1.NamespaceClass{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, nsclass)).To(Succeed())
+
+			// ConfigMap.data requires string values, not numbers.
+			nsclass.Spec.Resources = append(
+				nsclass.Spec.Resources,
+				runtime.RawExtension{
+					Raw: []byte(`{
+                "apiVersion": "v1",
+                "kind": "ConfigMap",
+                "metadata": {"name": "invalid-config"},
+                "data": {"bad-value": 123}
+            }`),
+				},
+			)
+			Expect(k8sClient.Update(ctx, nsclass)).To(Succeed())
+
+			_, err := r.Reconcile(ctx, req)
+			Expect(err).To(HaveOccurred())
+
+			// The two valid manifests should still have applied.
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: TestNamespaceName,
+				Name:      TestConfigMapName,
+			}, cm)).To(Succeed())
+
+			sa := &corev1.ServiceAccount{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: TestNamespaceName,
+				Name:      TestServiceAccountName,
+			}, sa)).To(Succeed())
+
+			Expect(k8sClient.Get(ctx, typeNamespacedName, nsclass)).To(Succeed())
+			Expect(nsclass.Status.ManagedResources).To(HaveLen(2))
+
+			Expect(nsclass.Status.ManagedResources).To(
+				ContainElement(HaveField("UID", cm.UID)),
+			)
+			Expect(nsclass.Status.ManagedResources).To(
+				ContainElement(HaveField("UID", sa.UID)),
+			)
+		})
 		It("should leave resources and status when prune is disabled", func() {
 			By("Reconciling the created resource")
 			controllerReconciler := &NamespaceClassReconciler{
@@ -266,6 +421,241 @@ var _ = Describe("NamespaceClass Controller", func() {
 			Expect(k8sClient.Update(ctx, nsclass)).To(Succeed())
 			// Reconciliation should fail with ErrDuplicateResource
 			_, err := controllerReconciler.Reconcile(ctx, req)
+			Expect(errors.Is(err, ErrDuplicateResource)).To(BeTrue())
+		})
+		It("should correct manually modified resource data", func() {
+			r := &NamespaceClassReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			req := reconcile.Request{NamespacedName: typeNamespacedName}
+
+			_, err := r.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			key := types.NamespacedName{
+				Namespace: TestNamespaceName,
+				Name:      TestConfigMapName,
+			}
+
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, key, cm)).To(Succeed())
+
+			originalUID := cm.UID
+			cm.Data["message"] = "manually modified"
+			Expect(k8sClient.Update(ctx, cm)).To(Succeed())
+
+			_, err = r.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(ctx, key, cm)).To(Succeed())
+			Expect(cm.Data["message"]).To(Equal("hello"))
+			Expect(cm.UID).To(Equal(originalUID))
+		})
+		It("should not change status when reconciling unchanged resources", func() {
+			r := &NamespaceClassReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			req := reconcile.Request{NamespacedName: typeNamespacedName}
+
+			_, err := r.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			before := &experimentalv1.NamespaceClass{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, before)).To(Succeed())
+			Expect(before.Status.ManagedResources).To(HaveLen(2))
+
+			key := types.NamespacedName{
+				Namespace: TestNamespaceName,
+				Name:      TestConfigMapName,
+			}
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, key, cm)).To(Succeed())
+			originalUID := cm.UID
+
+			_, err = r.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			after := &experimentalv1.NamespaceClass{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, after)).To(Succeed())
+
+			Expect(after.Status.ManagedResources).To(
+				Equal(before.Status.ManagedResources),
+			)
+			Expect(after.ResourceVersion).To(Equal(before.ResourceVersion))
+
+			Expect(k8sClient.Get(ctx, key, cm)).To(Succeed())
+			Expect(cm.UID).To(Equal(originalUID))
+		})
+		It("should override the namespace specified in a resource template", func() {
+			r := &NamespaceClassReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			req := reconcile.Request{NamespacedName: typeNamespacedName}
+
+			nsclass := &experimentalv1.NamespaceClass{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, nsclass)).To(Succeed())
+
+			nsclass.Spec.Resources[0].Raw = []byte(`{
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {
+            "name": "test-config",
+            "namespace": "wrong-namespace"
+        },
+        "data": {"message": "hello"}
+    }`)
+			Expect(k8sClient.Update(ctx, nsclass)).To(Succeed())
+
+			_, err := r.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: TestNamespaceName,
+				Name:      TestConfigMapName,
+			}, cm)).To(Succeed())
+
+			Expect(cm.Namespace).To(Equal(TestNamespaceName))
+
+			Expect(k8sClient.Get(ctx, typeNamespacedName, nsclass)).To(Succeed())
+			Expect(nsclass.Status.ManagedResources).To(
+				ContainElement(And(
+					HaveField("Kind", "ConfigMap"),
+					HaveField("Namespace", TestNamespaceName),
+				)),
+			)
+		})
+		It("should apply resources only to matching namespaces", func() {
+			r := &NamespaceClassReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			req := reconcile.Request{NamespacedName: typeNamespacedName}
+
+			matching := &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "second-matching-namespace",
+					Labels: map[string]string{
+						NamespaceClassReconciliationLabel: TestNamespaceClassName,
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, matching)).To(Succeed())
+
+			DeferCleanup(func() {
+				// envtest doesn't run the namespace or garbage-collection controllers.
+				for _, obj := range []client.Object{
+					&corev1.ConfigMap{
+						ObjectMeta: metav1.ObjectMeta{
+							Name: TestConfigMapName, Namespace: matching.Name,
+						},
+					},
+					&corev1.ServiceAccount{
+						ObjectMeta: metav1.ObjectMeta{
+							Name: TestServiceAccountName, Namespace: matching.Name,
+						},
+					},
+				} {
+					Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, obj))).To(Succeed())
+				}
+
+				current := &corev1.Namespace{}
+				Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name: matching.Name,
+				}, current)).To(Succeed())
+
+				delete(current.Labels, NamespaceClassReconciliationLabel)
+				Expect(k8sClient.Update(ctx, current)).To(Succeed())
+			})
+
+			unrelated := &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "unrelated-namespace",
+				},
+			}
+			Expect(k8sClient.Create(ctx, unrelated)).To(Succeed())
+
+			_, err := r.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			for _, namespace := range []string{TestNamespaceName, matching.Name} {
+				Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Namespace: namespace,
+					Name:      TestConfigMapName,
+				}, &corev1.ConfigMap{})).To(Succeed())
+
+				Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Namespace: namespace,
+					Name:      TestServiceAccountName,
+				}, &corev1.ServiceAccount{})).To(Succeed())
+			}
+
+			Expect(apierrors.IsNotFound(
+				k8sClient.Get(ctx, types.NamespacedName{
+					Namespace: unrelated.Name,
+					Name:      TestConfigMapName,
+				}, &corev1.ConfigMap{}),
+			)).To(BeTrue())
+
+			nsclass := &experimentalv1.NamespaceClass{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, nsclass)).To(Succeed())
+			Expect(nsclass.Status.ManagedResources).To(HaveLen(4))
+		})
+		It("should succeed when the NamespaceClass no longer exists", func() {
+			r := &NamespaceClassReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			req := reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name: "nonexistent-namespaceclass",
+				},
+			}
+
+			result, err := r.Reconcile(ctx, req)
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeZero())
+		})
+		It("should reject duplicate templates even without matching namespaces", func() {
+			r := &NamespaceClassReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			req := reconcile.Request{NamespacedName: typeNamespacedName}
+
+			nsKey := types.NamespacedName{Name: TestNamespaceName}
+			ns := &corev1.Namespace{}
+			Expect(k8sClient.Get(ctx, nsKey, ns)).To(Succeed())
+
+			delete(ns.Labels, NamespaceClassReconciliationLabel)
+			Expect(k8sClient.Update(ctx, ns)).To(Succeed())
+
+			DeferCleanup(func() {
+				current := &corev1.Namespace{}
+				Expect(k8sClient.Get(ctx, nsKey, current)).To(Succeed())
+				if current.Labels == nil {
+					current.Labels = map[string]string{}
+				}
+				current.Labels[NamespaceClassReconciliationLabel] = TestNamespaceClassName
+				Expect(k8sClient.Update(ctx, current)).To(Succeed())
+			})
+
+			nsclass := &experimentalv1.NamespaceClass{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, nsclass)).To(Succeed())
+
+			// Duplicate the ServiceAccount template.
+			nsclass.Spec.Resources = append(
+				nsclass.Spec.Resources,
+				nsclass.Spec.Resources[1],
+			)
+			Expect(k8sClient.Update(ctx, nsclass)).To(Succeed())
+
+			_, err := r.Reconcile(ctx, req)
 			Expect(errors.Is(err, ErrDuplicateResource)).To(BeTrue())
 		})
 	})

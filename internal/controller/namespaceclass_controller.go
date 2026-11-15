@@ -149,12 +149,21 @@ func (r *NamespaceClassReconciler) BuildDesired(ctx context.Context, nsclass *ex
 		return nil, err
 	}
 	desired := make(map[ResourceKey]*unstructured.Unstructured, len(nsclass.Spec.Resources)*len(namespaces.Items))
-	for _, namespace := range namespaces.Items {
-		for _, rawResource := range nsclass.Spec.Resources {
-			obj := &unstructured.Unstructured{}
-			if err := json.Unmarshal(rawResource.Raw, &obj.Object); err != nil {
-				return nil, err
-			}
+	duplicate := make(map[ResourceKey]*unstructured.Unstructured, len(nsclass.Spec.Resources)*len(namespaces.Items))
+	for _, rawResource := range nsclass.Spec.Resources {
+		obj := &unstructured.Unstructured{}
+		if err := json.Unmarshal(rawResource.Raw, &obj.Object); err != nil {
+			return nil, err
+		}
+		key := ResourceKey{
+			GVK:            obj.GroupVersionKind(),
+			NamespacedName: client.ObjectKeyFromObject(obj),
+		}
+		if _, ok := duplicate[key]; ok {
+			return nil, fmt.Errorf("%w: %v", ErrDuplicateResource, key)
+		}
+		duplicate[key] = obj
+		for _, namespace := range namespaces.Items {
 			obj.SetNamespace(namespace.Name)
 			if err := controllerutil.SetControllerReference(nsclass, obj, r.Scheme); err != nil {
 				return nil, err
@@ -162,9 +171,6 @@ func (r *NamespaceClassReconciler) BuildDesired(ctx context.Context, nsclass *ex
 			key := ResourceKey{
 				GVK:            obj.GroupVersionKind(),
 				NamespacedName: client.ObjectKeyFromObject(obj),
-			}
-			if _, ok := desired[key]; ok {
-				return nil, fmt.Errorf("%w: %v", ErrDuplicateResource, key)
 			}
 			desired[key] = obj
 		}
