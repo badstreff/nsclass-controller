@@ -52,4 +52,4 @@ Examples can be found under `config/samples/`
 # TODOs
 
 - [ ] Instead of requeuing every resource, find a way to dynamically watch generated resources
-- [ ] Ensure when a namespace switches classes that would create the same resources the old `NamespaceClass` does not delete them
+- [ ] Ensure when a namespace switches classes that would create the same resources the old `NamespaceClass` does not delete them. _This can be worked around by an admin by disabling pruning on the original `NamespaceClass` updating the label and then re-enabling pruning_
