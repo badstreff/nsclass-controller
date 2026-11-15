@@ -814,5 +814,111 @@ var _ = Describe("NamespaceClass Controller", func() {
 			Expect(condition.Status).To(Equal(metav1.ConditionTrue))
 			Expect(condition.Reason).To(Equal("PruneSuccessful"))
 		})
+		It("should transfer ownership between NamespaceClasses without recreating resources", func() {
+			controllerReconciler := &NamespaceClassReconciler{
+				Client:     k8sClient,
+				Scheme:     k8sClient.Scheme(),
+				RESTMapper: k8sClient.RESTMapper(),
+			}
+
+			nsclassAKey := nsclassKey
+			nsclassBKey := types.NamespacedName{Name: "test-namespaceclass-b"}
+			cmKey := types.NamespacedName{
+				Namespace: TestNamespaceName,
+				Name:      TestConfigMapName,
+			}
+
+			// 1. Reconcile A and record the original resource UID.
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: nsclassAKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, cmKey, cm)).To(Succeed())
+			originalUID := cm.UID
+
+			nsclassA := &experimentalv1.NamespaceClass{}
+			Expect(k8sClient.Get(ctx, nsclassAKey, nsclassA)).To(Succeed())
+
+			originalOwner := metav1.GetControllerOf(cm)
+			Expect(originalOwner).NotTo(BeNil())
+			Expect(originalOwner.UID).To(Equal(nsclassA.UID))
+
+			// 2. Disable pruning on A.
+			nsclassA.Spec.Prune = new(false)
+			Expect(k8sClient.Update(ctx, nsclassA)).To(Succeed())
+
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: nsclassAKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			// 3. Create B with the same resource templates.
+			nsclassB := &experimentalv1.NamespaceClass{
+				ObjectMeta: metav1.ObjectMeta{Name: nsclassBKey.Name},
+				Spec: experimentalv1.NamespaceClassSpec{
+					Prune:     new(true),
+					Resources: nsclassA.Spec.Resources,
+				},
+			}
+			Expect(k8sClient.Create(ctx, nsclassB)).To(Succeed())
+
+			DeferCleanup(func() {
+				ns := &corev1.Namespace{}
+				Expect(k8sClient.Get(ctx,
+					types.NamespacedName{Name: TestNamespaceName}, ns,
+				)).To(Succeed())
+
+				ns.Labels[NamespaceClassReconciliationLabel] = nsclassA.Name
+				Expect(k8sClient.Update(ctx, ns)).To(Succeed())
+
+				Expect(client.IgnoreNotFound(
+					k8sClient.Delete(ctx, nsclassB),
+				)).To(Succeed())
+			})
+
+			// 4. Switch the namespace to B.
+			ns := &corev1.Namespace{}
+			Expect(k8sClient.Get(ctx,
+				types.NamespacedName{Name: TestNamespaceName}, ns,
+			)).To(Succeed())
+
+			ns.Labels[NamespaceClassReconciliationLabel] = nsclassB.Name
+			Expect(k8sClient.Update(ctx, ns)).To(Succeed())
+
+			// 5. B attempts to adopt the existing resources using SSA.
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: nsclassBKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify ownership changed without recreation.
+			Expect(k8sClient.Get(ctx, cmKey, cm)).To(Succeed())
+			Expect(cm.UID).To(Equal(originalUID))
+
+			newOwner := metav1.GetControllerOf(cm)
+			Expect(newOwner).NotTo(BeNil())
+			Expect(newOwner.UID).To(Equal(nsclassB.UID))
+			Expect(newOwner.Name).To(Equal(nsclassB.Name))
+
+			// Ensure the old controller owner reference was removed.
+			Expect(cm.OwnerReferences).To(HaveLen(1))
+
+			// 6. Re-enable pruning on A.
+			Expect(k8sClient.Get(ctx, nsclassAKey, nsclassA)).To(Succeed())
+			nsclassA.Spec.Prune = new(true)
+			Expect(k8sClient.Update(ctx, nsclassA)).To(Succeed())
+
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: nsclassAKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			// 7. A must not delete B's resource.
+			Expect(k8sClient.Get(ctx, cmKey, cm)).To(Succeed())
+			Expect(cm.UID).To(Equal(originalUID))
+			Expect(metav1.GetControllerOf(cm).UID).To(Equal(nsclassB.UID))
+
+			// A should have cleared its inventory.
+			Expect(k8sClient.Get(ctx, nsclassAKey, nsclassA)).To(Succeed())
+			Expect(nsclassA.Status.ManagedResources).To(BeEmpty())
+
+			// B should now track both managed resources.
+			Expect(k8sClient.Get(ctx, nsclassBKey, nsclassB)).To(Succeed())
+			Expect(nsclassB.Status.ManagedResources).To(HaveLen(2))
+		})
 	})
 })
