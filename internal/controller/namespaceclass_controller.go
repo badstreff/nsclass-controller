@@ -107,11 +107,13 @@ func (r *NamespaceClassReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		condition := &metav1.Condition{
 			Type:               ConditionTypeAccepted,
 			Status:             metav1.ConditionTrue,
-			Reason:             "",
-			Message:            "",
+			Reason:             "ValidSpec",
+			Message:            "Resource specifications are valid",
 			ObservedGeneration: nsclass.Generation,
 		}
-		r.UpdateStatus(ctx, nsclass, inventory, condition)
+		if err := r.UpdateStatus(ctx, nsclass, inventory, condition); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	// Apply desired state
@@ -133,11 +135,13 @@ func (r *NamespaceClassReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		condition := &metav1.Condition{
 			Type:               ConditionTypeReady,
 			Status:             metav1.ConditionTrue,
-			Reason:             "",
-			Message:            "",
+			Reason:             "Applied",
+			Message:            "Desired resources applied successfully",
 			ObservedGeneration: nsclass.Generation,
 		}
-		r.UpdateStatus(ctx, nsclass, inventory, condition)
+		if err := r.UpdateStatus(ctx, nsclass, inventory, condition); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	// Prune resources if pruning is enabled
@@ -149,7 +153,7 @@ func (r *NamespaceClassReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			log.Error(err, "prune error")
 			return ctrl.Result{}, err
 		}
-		err = r.UpdateStatus(ctx, nsclass, inventory, nil)
+		err = r.UpdateStatus(ctx, nsclass, applied, nil)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
