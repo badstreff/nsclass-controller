@@ -1,9 +1,8 @@
 # nsclass-controller
 
-The controller will attempt to create all resources under `spec.resources` in namespaces with the label `experimental.badstreff.io/namespace-class` that matches `metadata.name` for the `NamespaceClass` resource. Resources are not pruned by default, the boolean `spec.prune` can be set to true if you would like to remove resources from the namespace when the `NamespaceClass` is updated.
+The controller will attempt to create all resources under `spec.resources` in namespaces with the label `experimental.badstreff.io/namespace-class` that matches `metadata.name` for the `NamespaceClass` resource. Resources are not pruned by default, the boolean `spec.prune` can be set to true if you would like to remove resources from the namespace when the `NamespaceClass` is updated. Duplicate resources or cluster-scoped resources will result in an error.
 
-
-# Local Dev
+## Local Dev
 
 ```bash
 # Setup
@@ -19,7 +18,7 @@ kubectl patch namespace demo -p '{"metadata":{"labels":{"experimental.badstreff.
 kubectl get all -n demo
 ```
 
-# Installation Instructions
+## Installation Instructions
 
 Install the Helm chart from a local checkout of this repository. Create a `values.yaml` file with RBAC rules for the resources your `NamespaceClass` resources will manage:
 
@@ -45,11 +44,20 @@ helm upgrade --install nsclass-controller ./dist/chart \
 
 The chart creates a ClusterRole by default (`rbac.namespaced: false`) so the controller can manage resources across namespaces.
 
-# Examples
+## Examples
 
 Examples can be found under `config/samples/`
 
-# TODOs
+## Known Issues
 
-- [ ] Instead of requeuing every resource, find a way to dynamically watch generated resources
-- [ ] Ensure when a namespace switches classes that would create the same resources the old `NamespaceClass` does not delete them. _This can be worked around by an admin by disabling pruning on the original `NamespaceClass` updating the label and then re-enabling pruning_
+- Switching a namespace between classes that manage the same resources can cause the old `NamespaceClass` to prune resources before the new class adopts them. Disable pruning on the original `NamespaceClass`, update the namespace label, wait for the new class to reconcile successfully and take ownership, and then re-enable pruning on the original class. Once ownership has transferred, the old class skips those resources during pruning.
+
+## FAQ
+
+### Why can I modify some fields on a resource spec while others are overwritten?
+
+The controller uses Server-Side Apply with forced field ownership. Fields specified in `spec.resources` are reapplied during reconciliation, so manual changes to those fields are overwritten. Fields omitted from the template can remain under another field manager's ownership. Kubernetes tracks field ownership in `metadata.managedFields`; list and map merge behavior depends on the resource's schema.
+
+### Why does the controller report a forbidden error when managing a resource?
+
+The controller needs RBAC permissions for each resource type in your templates. Add the appropriate API groups, plural resource names, and verbs to `rbac.additionalRules` in your Helm values, then upgrade the release using those values. See [Installation Instructions](#installation-instructions) for an example.

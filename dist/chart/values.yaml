@@ -25,6 +25,16 @@ manager:
   args:
     - --leader-elect
 
+  ## Default reconciliation interval in seconds.
+  ## Consider increasing this interval when dynamicWatch is enabled.
+  ##
+  defaultRequeue: 600
+
+  ## Watch managed resource types for changes to trigger reconciliation.
+  ## Watching many types or frequently updated resources increases watch activity.
+  ##
+  dynamicWatch: false
+
   ## Health probes.
   ## The manager serves the liveness (/healthz) and readiness (/readyz) endpoints on this port.
   ##

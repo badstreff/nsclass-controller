@@ -84,6 +84,8 @@ spec:
         - --metrics-bind-address=0
         {{- end }}
         - --health-probe-bind-address=:{{ .Values.manager.healthProbe.port }}
+        - --default-requeue={{ .Values.manager.defaultRequeue }}
+        - --dynamic-watch={{ .Values.manager.dynamicWatch }}
         {{- range .Values.manager.args }}
         - {{ tpl . $ }}
         {{- end }}
