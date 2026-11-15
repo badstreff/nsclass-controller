@@ -71,7 +71,7 @@ jobs:
 
       - name: Deploy manager via Helm
         run: |
-          make helm-deploy
+          make helm-deploy HELM_EXTRA_ARGS="--set manager.image.pullPolicy=IfNotPresent"
 
       - name: Check Helm release status
         run: |
