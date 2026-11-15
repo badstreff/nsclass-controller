@@ -9,6 +9,8 @@ The controller will attempt to create all resources under `spec.resources` in na
 kind create cluster --name demo
 make generate manifests install
 make test  # optional
+
+# Or you can run `go run ./cmd/main.go --dynamic-watch` to test watching managed resources
 make run
 
 # In a different shell
