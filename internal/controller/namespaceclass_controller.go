@@ -172,10 +172,10 @@ func (r *NamespaceClassReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// When we prune we return requeue true if any resources were marked as needing to be deleted so we check again pretty quick
 	if nsclass.Spec.Prune != nil && *nsclass.Spec.Prune {
 		log.V(1).Info("pruning removed resources")
-		requeue, err := r.Prune(ctx, inventory, desired)
-		if err != nil {
-			log.Error(err, "prune error")
-			return ctrl.Result{}, err
+		requeue, pruneErr := r.Prune(ctx, inventory, desired)
+		statusErr := r.UpdateStatus(ctx, nsclass, inventory, nil)
+		if pruneErr != nil || statusErr != nil {
+			return ctrl.Result{}, errors.Join(pruneErr, statusErr)
 		}
 		err = r.UpdateStatus(ctx, nsclass, inventory, nil)
 		if err != nil {
@@ -246,6 +246,7 @@ func (r *NamespaceClassReconciler) BuildDesired(ctx context.Context, nsclass *ex
 			GVK:            obj.GroupVersionKind(),
 			NamespacedName: client.ObjectKeyFromObject(obj),
 		}
+		key.NamespacedName.Namespace = "" // ignore any namespaces set in the template since they will be overwritten
 		namespaced, err := r.IsNamespaced(obj)
 		if err != nil {
 			return nil, fmt.Errorf("resolve resource scope: %w", err)
