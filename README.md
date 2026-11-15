@@ -21,7 +21,7 @@ kubectl get all -n demo
 
 # Installation Instructions
 
-Install the Helm chart from a local checkout of this repository. Create a `values.yaml` file with RBAC rules for the resources your `NamespaceClass` templates will manage:
+Install the Helm chart from a local checkout of this repository. Create a `values.yaml` file with RBAC rules for the resources your `NamespaceClass` resources will manage:
 
 ```yaml
 rbac:

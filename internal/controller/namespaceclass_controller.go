@@ -173,7 +173,7 @@ func (r *NamespaceClassReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// When we prune we return requeue true if any resources were marked as needing to be deleted so we check again pretty quick
 	if nsclass.Spec.Prune != nil && *nsclass.Spec.Prune {
 		log.V(1).Info("pruning removed resources")
-		requeue, pruneErr := r.Prune(ctx, inventory, desired)
+		requeue, pruneErr := r.Prune(ctx, nsclass, inventory, desired)
 		statusErr := r.UpdateStatus(ctx, nsclass, inventory, nil)
 		if pruneErr != nil || statusErr != nil {
 			condition := &metav1.Condition{
@@ -341,7 +341,12 @@ func (r *NamespaceClassReconciler) ApplyDesired(ctx context.Context, desired map
 }
 
 // Prune looks at the current inventory or resources and removed and resources that are not in the desired map, the inventory param is modified in place
-func (r *NamespaceClassReconciler) Prune(ctx context.Context, inventory ResourceInventory, desired map[ResourceKey]*unstructured.Unstructured) (bool, error) {
+func (r *NamespaceClassReconciler) Prune(
+	ctx context.Context,
+	nsclass *experimentalv1.NamespaceClass,
+	inventory ResourceInventory,
+	desired map[ResourceKey]*unstructured.Unstructured,
+) (bool, error) {
 	var errs error
 	requeue := false
 
@@ -349,55 +354,42 @@ func (r *NamespaceClassReconciler) Prune(ctx context.Context, inventory Resource
 		if _, exists := desired[key]; exists {
 			continue
 		}
-		// Resource no longer desired
-		// Attempt deletion with UID precondition
+
 		obj := &unstructured.Unstructured{}
-		obj.SetAPIVersion(managed.APIVersion)
-		obj.SetKind(managed.Kind)
-		obj.SetNamespace(managed.Namespace)
-		obj.SetName(managed.Name)
-		err := r.Delete(
-			ctx,
-			obj,
-			&client.DeleteOptions{
-				Preconditions: &metav1.Preconditions{
-					UID: new(managed.UID),
-				},
-			},
-		)
-		switch {
-		case apierrors.IsNotFound(err):
-			// Resource is confirmed absent, prune it
+		obj.SetGroupVersionKind(key.GVK)
+
+		// Resource already deleted
+		err := r.Get(ctx, key.NamespacedName, obj)
+		if apierrors.IsNotFound(err) {
 			delete(inventory, key)
 			continue
-		case apierrors.IsConflict(err):
-			// TODO: maybe switch to uncached reader
-			if getErr := r.Get(ctx, client.ObjectKeyFromObject(obj), obj); getErr != nil {
-				if apierrors.IsNotFound(getErr) {
-					// Original resource is gone, prune it
-					delete(inventory, key)
-					continue
-				}
-				// Get failed so retry...
-				managed.Phase = new(experimentalv1.PhaseFailed)
-				inventory[key] = managed
-				errs = errors.Join(errs, getErr)
-				continue
-			}
-			if managed.UID != obj.GetUID() {
-				// The original object has been replaced.
-				// Remove the old inventory entry.
+		}
+
+		// Delete the resource owned by nsclass
+		if err == nil {
+			owner := metav1.GetControllerOf(obj)
+			if obj.GetUID() != managed.UID ||
+				owner == nil || owner.UID != nsclass.UID {
 				delete(inventory, key)
 				continue
 			}
-			// Same UID, but some other conflict occurred, return a normal error and retry
-			managed.Phase = new(experimentalv1.PhaseFailed)
-			inventory[key] = managed
-			errs = errors.Join(errs, err)
+			uid := obj.GetUID()
+			rv := obj.GetResourceVersion()
+			err = r.Delete(ctx, obj, &client.DeleteOptions{
+				Preconditions: &metav1.Preconditions{
+					UID:             &uid,
+					ResourceVersion: &rv,
+				},
+			})
+		}
+
+		switch {
+		case apierrors.IsNotFound(err):
+			delete(inventory, key)
 		case err != nil:
 			managed.Phase = new(experimentalv1.PhaseFailed)
 			inventory[key] = managed
-			errs = errors.Join(errs, err)
+			errs = errors.Join(errs, fmt.Errorf("prune %v: %w", key, err))
 		default:
 			managed.Phase = new(experimentalv1.PhaseDeleting)
 			inventory[key] = managed
