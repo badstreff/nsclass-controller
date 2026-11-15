@@ -57,7 +57,7 @@ const (
 var (
 	NamespaceClassReconciliationLabel = experimentalv1.GroupVersion.Group + "/namespace-class"
 	ErrDuplicateResource              = errors.New("duplicate resource")
-	ErrGlobalResource                 = errors.New("global resource not supported")
+	ErrClusterScopedResource          = errors.New("cluster-scoped resource not supported")
 )
 
 type ResourceKey struct {
@@ -107,11 +107,11 @@ func (r *NamespaceClassReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			err = r.UpdateStatus(ctx, nsclass, inventory, condition)
 			return ctrl.Result{}, err
 		}
-		if errors.Is(err, ErrGlobalResource) {
+		if errors.Is(err, ErrClusterScopedResource) {
 			condition := &metav1.Condition{
 				Type:               ConditionTypeAccepted,
 				Status:             metav1.ConditionFalse,
-				Reason:             "GlobalResource",
+				Reason:             "ClusterScopedResource",
 				Message:            err.Error(),
 				ObservedGeneration: nsclass.Generation,
 			}
@@ -211,7 +211,7 @@ func (r *NamespaceClassReconciler) listNamespaces(ctx context.Context, nsclass *
 	return namespaces, nil
 }
 
-// IsNamespaced is a helper utility used to check if an object is a Global resource or not
+// IsNamespaced is a helper utility used to check if an object is a cluster-scoped resource or not
 func (r *NamespaceClassReconciler) IsNamespaced(
 	obj *unstructured.Unstructured,
 ) (bool, error) {
@@ -251,7 +251,7 @@ func (r *NamespaceClassReconciler) BuildDesired(ctx context.Context, nsclass *ex
 			return nil, fmt.Errorf("resolve resource scope: %w", err)
 		}
 		if !namespaced {
-			return nil, fmt.Errorf("%w: %v", ErrGlobalResource, key)
+			return nil, fmt.Errorf("%w: %v", ErrClusterScopedResource, key)
 		}
 		if _, ok := duplicate[key]; ok {
 			return nil, fmt.Errorf("%w: %v", ErrDuplicateResource, key)

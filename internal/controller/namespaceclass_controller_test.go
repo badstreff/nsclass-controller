@@ -439,7 +439,7 @@ var _ = Describe("NamespaceClass Controller", func() {
 			Expect(condition.Reason).To(Equal("DuplicateResource"))
 			Expect(condition.ObservedGeneration).To(Equal(nsclass.Generation))
 		})
-		It("should error on global/cluster-scoped resources", func() {
+		It("should error on cluster-scoped resources", func() {
 			controllerReconciler := &NamespaceClassReconciler{
 				Client:     k8sClient,
 				Scheme:     k8sClient.Scheme(),
@@ -474,7 +474,7 @@ var _ = Describe("NamespaceClass Controller", func() {
 			)
 			Expect(condition).NotTo(BeNil())
 			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
-			Expect(condition.Reason).To(Equal("GlobalResource"))
+			Expect(condition.Reason).To(Equal("ClusterScopedResource"))
 			Expect(condition.ObservedGeneration).To(Equal(nsclass.Generation))
 		})
 		It("should correct manually modified resource data", func() {
