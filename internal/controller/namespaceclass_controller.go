@@ -52,6 +52,7 @@ const (
 	fieldManager          = "namespace-class-controller"
 	ConditionTypeAccepted = "Accepted"
 	ConditionTypeReady    = "Ready"
+	ConditionTypePruned   = "Pruned"
 )
 
 var (
@@ -175,18 +176,40 @@ func (r *NamespaceClassReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		requeue, pruneErr := r.Prune(ctx, inventory, desired)
 		statusErr := r.UpdateStatus(ctx, nsclass, inventory, nil)
 		if pruneErr != nil || statusErr != nil {
+			condition := &metav1.Condition{
+				Type:               ConditionTypePruned,
+				Status:             metav1.ConditionFalse,
+				Reason:             "PruneFailed",
+				Message:            "Some resources were not fully pruned",
+				ObservedGeneration: nsclass.Generation,
+			}
+			if err := r.UpdateStatus(ctx, nsclass, inventory, condition); err != nil {
+				return ctrl.Result{}, err
+			}
 			return ctrl.Result{}, errors.Join(pruneErr, statusErr)
 		}
-		err = r.UpdateStatus(ctx, nsclass, inventory, nil)
-		if err != nil {
+		condition := &metav1.Condition{
+			Type:               ConditionTypePruned,
+			Status:             metav1.ConditionTrue,
+			Reason:             "PruneSuccessful",
+			Message:            "Stale resources pruned",
+			ObservedGeneration: nsclass.Generation,
+		}
+		if err := r.UpdateStatus(ctx, nsclass, inventory, condition); err != nil {
 			return ctrl.Result{}, err
 		}
 		if requeue {
 			return ctrl.Result{RequeueAfter: time.Second * 10}, nil
 		}
 	} else {
-		err = r.UpdateStatus(ctx, nsclass, inventory, nil)
-		if err != nil {
+		condition := &metav1.Condition{
+			Type:               ConditionTypePruned,
+			Status:             metav1.ConditionTrue,
+			Reason:             "PruneDisabled",
+			Message:            "Pruning is currently disabled",
+			ObservedGeneration: nsclass.Generation,
+		}
+		if err := r.UpdateStatus(ctx, nsclass, inventory, condition); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
