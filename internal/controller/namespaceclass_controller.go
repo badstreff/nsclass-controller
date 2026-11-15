@@ -44,7 +44,6 @@ import (
 
 	experimentalv1 "github.com/badstreff/nsclass-controller/api/v1"
 	corev1 "k8s.io/api/core/v1"
-	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -538,7 +537,7 @@ func (r *NamespaceClassReconciler) WatchGVK(
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *NamespaceClassReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	ctrl, err := ctrl.NewControllerManagedBy(mgr).
+	c, err := ctrl.NewControllerManagedBy(mgr).
 		For(
 			&experimentalv1.NamespaceClass{},
 			builder.WithPredicates(predicate.GenerationChangedPredicate{}),
@@ -548,7 +547,6 @@ func (r *NamespaceClassReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&corev1.Namespace{},
 			handler.EnqueueRequestsFromMapFunc(r.mapNamespaceToNamespaceClass),
 		).
-		Owns(&networkingv1.NetworkPolicy{}).
 		Build(r)
 
 	if err != nil {
@@ -556,7 +554,7 @@ func (r *NamespaceClassReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	r.watchMu = sync.Mutex{}
-	r.controller = ctrl
+	r.controller = c
 	r.cache = mgr.GetCache()
 	r.watched = make(map[schema.GroupVersionKind]struct{})
 	return nil

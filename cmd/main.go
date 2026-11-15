@@ -86,8 +86,11 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
-	flag.IntVar(&defaultRequeue, "default-requeue", 600, "Default time in seconds to requeue reconciliation, set this much higher if enabling --dynamic-watch")
-	flag.BoolVar(&dynamicWatch, "dynamic-watch", false, "Start watching each resource type we create, when watching lots of types or types that receive lots of updates you may want to consider turning this off and reconciling on a cadence instead")
+	flag.IntVar(&defaultRequeue, "default-requeue", 600, "Default time in seconds to requeue reconciliation, set this"+
+		"much higher if enabling --dynamic-watch")
+	flag.BoolVar(&dynamicWatch, "dynamic-watch", false, "Start watching each resource type we create, when watching "+
+		"lots of types or types that receive lots of updates you may want to consider turning this off and "+
+		"reconciling on a cadence instead")
 	opts := zap.Options{
 		Development: true,
 		Level:       zapcore.DebugLevel,
