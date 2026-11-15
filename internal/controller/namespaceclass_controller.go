@@ -199,6 +199,16 @@ func (r *NamespaceClassReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{}, err
 		}
 		if requeue {
+			condition := &metav1.Condition{
+				Type:               ConditionTypePruned,
+				Status:             metav1.ConditionFalse,
+				Reason:             "Pruning",
+				Message:            "Some resources are pending pruning",
+				ObservedGeneration: nsclass.Generation,
+			}
+			if err := r.UpdateStatus(ctx, nsclass, inventory, condition); err != nil {
+				return ctrl.Result{}, err
+			}
 			return ctrl.Result{RequeueAfter: time.Second * 10}, nil
 		}
 	} else {
@@ -219,8 +229,8 @@ func (r *NamespaceClassReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	return ctrl.Result{RequeueAfter: time.Minute * 5}, nil
 }
 
-// listNamespaces returns the namespaces associated with a namespace class
-func (r *NamespaceClassReconciler) listNamespaces(ctx context.Context, nsclass *experimentalv1.NamespaceClass) (*corev1.NamespaceList, error) {
+// ListNamespaces returns the namespaces associated with a namespace class
+func (r *NamespaceClassReconciler) ListNamespaces(ctx context.Context, nsclass *experimentalv1.NamespaceClass) (*corev1.NamespaceList, error) {
 	namespaces := &corev1.NamespaceList{}
 	selector, err := metav1.LabelSelectorAsSelector(
 		&metav1.LabelSelector{MatchLabels: map[string]string{NamespaceClassReconciliationLabel: nsclass.Name}},
@@ -253,7 +263,7 @@ func (r *NamespaceClassReconciler) IsNamespaced(
 
 // BuildDesired returns the resources that need applied or an Error if we find any duplicated
 func (r *NamespaceClassReconciler) BuildDesired(ctx context.Context, nsclass *experimentalv1.NamespaceClass) (map[ResourceKey]*unstructured.Unstructured, error) {
-	namespaces, err := r.listNamespaces(ctx, nsclass)
+	namespaces, err := r.ListNamespaces(ctx, nsclass)
 	if err != nil {
 		return nil, err
 	}
