@@ -35,10 +35,17 @@ import (
 	experimentalv1 "github.com/badstreff/nsclass-controller/api/v1"
 )
 
+const (
+	TestNamespaceClassName = "test-namespaceclass"
+	TestNamespaceName      = "test-namespace"
+	TestConfigMapName      = "test-config"
+	TestServiceAccountName = "test-sa"
+)
+
 var _ = Describe("NamespaceClass Controller", func() {
 	Context("When reconciling a resource", func() {
 		const (
-			resourceName = "test-namespaceclass"
+			resourceName = TestNamespaceClassName
 		)
 
 		ctx := context.Background()
@@ -64,7 +71,7 @@ var _ = Describe("NamespaceClass Controller", func() {
     							    "apiVersion": "v1",
                     			    "kind": "ConfigMap",
                     			    "metadata": {
-                    			        "name": "test-config"
+                    			        "name": "` + TestConfigMapName + `"
                     			    },
                     			    "data": {
                     			        "message": "hello"
@@ -76,7 +83,7 @@ var _ = Describe("NamespaceClass Controller", func() {
     							    "apiVersion": "v1",
     							    "kind": "ServiceAccount",
     							    "metadata": {
-    							        "name": "test-sa"
+                    			        "name": "` + TestServiceAccountName + `"
     							    }
     							}`),
 							},
@@ -86,7 +93,7 @@ var _ = Describe("NamespaceClass Controller", func() {
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 				ns := &corev1.Namespace{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "test-namespace",
+						Name: TestNamespaceName,
 						Labels: map[string]string{
 							NamespaceClassReconciliationLabel: resourceName,
 						},
@@ -106,12 +113,12 @@ var _ = Describe("NamespaceClass Controller", func() {
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 
 			cm := &corev1.ConfigMap{}
-			err = k8sClient.Get(ctx, types.NamespacedName{Name: "test-config", Namespace: "test-namespace"}, cm)
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: TestConfigMapName, Namespace: TestNamespaceName}, cm)
 			if err == nil {
 				Expect(k8sClient.Delete(ctx, cm)).To(Succeed())
 			}
 			sa := &corev1.ServiceAccount{}
-			err = k8sClient.Get(ctx, types.NamespacedName{Name: "test-sa", Namespace: "test-namespace"}, sa)
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: TestServiceAccountName, Namespace: TestNamespaceName}, sa)
 			if err == nil {
 				Expect(k8sClient.Delete(ctx, sa)).To(Succeed())
 			}
@@ -129,11 +136,11 @@ var _ = Describe("NamespaceClass Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			sa := &corev1.ServiceAccount{}
-			err = k8sClient.Get(ctx, types.NamespacedName{Namespace: "test-namespace", Name: "test-sa"}, sa)
+			err = k8sClient.Get(ctx, types.NamespacedName{Namespace: TestNamespaceName, Name: TestServiceAccountName}, sa)
 			Expect(err).NotTo(HaveOccurred())
 
 			cm := &corev1.ConfigMap{}
-			err = k8sClient.Get(ctx, types.NamespacedName{Namespace: "test-namespace", Name: "test-config"}, cm)
+			err = k8sClient.Get(ctx, types.NamespacedName{Namespace: TestNamespaceName, Name: TestConfigMapName}, cm)
 			Expect(err).NotTo(HaveOccurred())
 		})
 		It("should successfully prune the resource", func() {
@@ -147,7 +154,7 @@ var _ = Describe("NamespaceClass Controller", func() {
 					Name: resourceName,
 				},
 			}
-			key := types.NamespacedName{Namespace: "test-namespace", Name: "test-config"}
+			key := types.NamespacedName{Namespace: TestNamespaceName, Name: TestConfigMapName}
 			_, err := controllerReconciler.Reconcile(ctx, req)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -191,7 +198,7 @@ var _ = Describe("NamespaceClass Controller", func() {
 					Name: resourceName,
 				},
 			}
-			key := types.NamespacedName{Namespace: "test-namespace", Name: "test-config"}
+			key := types.NamespacedName{Namespace: TestNamespaceName, Name: TestConfigMapName}
 
 			// Disable pruning
 			nsclass := &experimentalv1.NamespaceClass{}
@@ -235,14 +242,14 @@ var _ = Describe("NamespaceClass Controller", func() {
     							    "apiVersion": "v1",
     							    "kind": "ServiceAccount",
     							    "metadata": {
-    							        "name": "test-sa"
+                    			        "name": "` + TestServiceAccountName + `"
     							    }
     							}`),
 			})
 			Expect(k8sClient.Update(ctx, nsclass)).To(Succeed())
 			// Reconciliation should fail with ErrDuplicateResource
 			_, err := controllerReconciler.Reconcile(ctx, req)
-			Expect(errors.Is(err, ErrDuplicateResource)).To(Equal(true))
+			Expect(errors.Is(err, ErrDuplicateResource)).To(BeTrue())
 		})
 	})
 })

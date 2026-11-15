@@ -80,7 +80,7 @@ func (r *NamespaceClassReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	// Get NamespaceClass
 	nsclass := &experimentalv1.NamespaceClass{}
-	if err := r.Client.Get(ctx, req.NamespacedName, nsclass); err != nil {
+	if err := r.Get(ctx, req.NamespacedName, nsclass); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
