@@ -188,16 +188,6 @@ func (r *NamespaceClassReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}
 			return ctrl.Result{}, errors.Join(pruneErr, statusErr)
 		}
-		condition := &metav1.Condition{
-			Type:               ConditionTypePruned,
-			Status:             metav1.ConditionTrue,
-			Reason:             "PruneSuccessful",
-			Message:            "Stale resources pruned",
-			ObservedGeneration: nsclass.Generation,
-		}
-		if err := r.UpdateStatus(ctx, nsclass, inventory, condition); err != nil {
-			return ctrl.Result{}, err
-		}
 		if requeue {
 			condition := &metav1.Condition{
 				Type:               ConditionTypePruned,
@@ -210,6 +200,17 @@ func (r *NamespaceClassReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				return ctrl.Result{}, err
 			}
 			return ctrl.Result{RequeueAfter: time.Second * 10}, nil
+		} else {
+			condition := &metav1.Condition{
+				Type:               ConditionTypePruned,
+				Status:             metav1.ConditionTrue,
+				Reason:             "PruneSuccessful",
+				Message:            "Stale resources pruned",
+				ObservedGeneration: nsclass.Generation,
+			}
+			if err := r.UpdateStatus(ctx, nsclass, inventory, condition); err != nil {
+				return ctrl.Result{}, err
+			}
 		}
 	} else {
 		condition := &metav1.Condition{
