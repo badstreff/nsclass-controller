@@ -71,7 +71,6 @@ type NamespaceClassReconciler struct {
 // +kubebuilder:rbac:groups=experimental.badstreff.io,resources=namespaceclasses/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=experimental.badstreff.io,resources=namespaceclasses/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
-// +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
 
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.25.0/pkg/reconcile
