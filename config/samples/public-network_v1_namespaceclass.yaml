@@ -1,0 +1,24 @@
+apiVersion: experimental.badstreff.io/v1
+kind: NamespaceClass
+metadata:
+  name: public-network
+spec:
+  prune: true
+  resources:
+    - apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata:
+        name: public-ingress
+      spec:
+        podSelector: {}
+        policyTypes:
+          - Ingress
+        ingress:
+          - {}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nsclass-sample-public-network
+  labels:
+    experimental.badstreff.io/namespace-class: public-network

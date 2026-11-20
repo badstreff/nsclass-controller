@@ -1,4 +1,9 @@
 ## Append samples of your project ##
 resources:
 - experimental_v1_namespaceclass.yaml
+- quota_v1_namespaceclass.yaml
+- reader_v1_namespaceclass.yaml
+- retain_v1_namespaceclass.yaml
+- internal-network_v1_namespaceclass.yaml
+- public-network_v1_namespaceclass.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

@@ -1,0 +1,20 @@
+apiVersion: experimental.badstreff.io/v1
+kind: NamespaceClass
+metadata:
+  name: namespaceclass-retain
+spec:
+  prune: false
+  resources:
+    - apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: retained-settings
+      data:
+        environment: demo
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nsclass-sample-retain
+  labels:
+    experimental.badstreff.io/namespace-class: namespaceclass-retain

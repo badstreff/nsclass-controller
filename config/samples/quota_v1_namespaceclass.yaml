@@ -1,0 +1,38 @@
+apiVersion: experimental.badstreff.io/v1
+kind: NamespaceClass
+metadata:
+  name: namespaceclass-quota
+spec:
+  prune: true
+  resources:
+    - apiVersion: v1
+      kind: ResourceQuota
+      metadata:
+        name: sample-quota
+      spec:
+        hard:
+          pods: "5"
+          requests.cpu: "1"
+          requests.memory: 512Mi
+          limits.cpu: "2"
+          limits.memory: 1Gi
+    - apiVersion: v1
+      kind: LimitRange
+      metadata:
+        name: sample-container-defaults
+      spec:
+        limits:
+          - type: Container
+            defaultRequest:
+              cpu: 100m
+              memory: 64Mi
+            default:
+              cpu: 250m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nsclass-sample-quota
+  labels:
+    experimental.badstreff.io/namespace-class: namespaceclass-quota
